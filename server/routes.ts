@@ -584,6 +584,7 @@ export async function registerRoutes(
         return d > max ? d : max;
       }, new Date(eligible[0].dueDate));
 
+      const isVendorCreated = user.role === "vendor";
       const offer = await storage.createOffer({
         restaurantId,
         vendorId,
@@ -591,8 +592,9 @@ export async function registerRoutes(
         feeAmount: String(feeAmount.toFixed(2)),
         totalRepayment: String(totalRepayment.toFixed(2)),
         weightedDays: String(weightedDays.toFixed(2)),
-        status: "draft",
+        status: isVendorCreated ? "vendor_accepted" : "draft",
         repaymentDate: maxDueDate.toISOString().split("T")[0],
+        ...(isVendorCreated ? { acceptedAt: new Date() } : {}),
       });
 
       let remaining = advanceAmount;
@@ -649,36 +651,28 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/offers/:id/restaurant-approve", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+  app.post("/api/offers/:id/admin-approve", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
-      const user = req.currentUser!;
-      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
       if (offer.status !== "vendor_accepted") {
         return res.status(400).json({ message: "Offer must be vendor-accepted first" });
       }
-      await storage.updateOfferStatus(offer.id, "restaurant_approved");
+      await storage.updateOfferStatus(offer.id, "admin_approved");
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  app.post("/api/offers/:id/restaurant-reject", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+  app.post("/api/offers/:id/admin-reject", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
-      const user = req.currentUser!;
-      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
       if (offer.status !== "vendor_accepted") {
         return res.status(400).json({ message: "Offer must be vendor-accepted first" });
       }
-      await storage.updateOfferStatus(offer.id, "vendor_rejected");
+      await storage.updateOfferStatus(offer.id, "admin_rejected");
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
@@ -689,8 +683,8 @@ export async function registerRoutes(
     try {
       const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
-      if (offer.status !== "restaurant_approved") {
-        return res.status(400).json({ message: "Offer must be restaurant-approved first" });
+      if (offer.status !== "admin_approved") {
+        return res.status(400).json({ message: "Offer must be admin-approved first" });
       }
       await storage.updateOfferStatus(offer.id, "payout_sent");
       await storage.createLedgerEntry({

@@ -50,8 +50,8 @@ const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
   vendor_accepted: { label: "Vendor Accepted", color: "bg-chart-1/10 text-chart-1" },
   vendor_rejected: { label: "Vendor Rejected", color: "bg-destructive/10 text-destructive" },
-  restaurant_approved: { label: "Restaurant Approved", color: "bg-chart-2/10 text-chart-2" },
-  restaurant_rejected: { label: "Restaurant Rejected", color: "bg-destructive/10 text-destructive" },
+  admin_approved: { label: "Admin Approved", color: "bg-chart-2/10 text-chart-2" },
+  admin_rejected: { label: "Admin Rejected", color: "bg-destructive/10 text-destructive" },
   payout_sent: { label: "Payout Sent", color: "bg-chart-3/10 text-chart-3" },
   repaid: { label: "Repaid", color: "bg-chart-2/10 text-chart-2" },
   closed: { label: "Closed", color: "bg-muted text-muted-foreground" },
@@ -80,7 +80,7 @@ export default function OfferReviewPage() {
       await apiRequest("POST", `/api/offers/${offerId}/vendor-accept`);
     },
     onSuccess: () => {
-      toast({ title: "Offer Accepted", description: "Waiting for restaurant approval." });
+      toast({ title: "Offer Accepted", description: "Waiting for admin approval." });
       queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
       queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/vendor/dashboard"] });
@@ -105,9 +105,9 @@ export default function OfferReviewPage() {
     },
   });
 
-  const restaurantApproveMutation = useMutation({
+  const adminApproveMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", `/api/offers/${offerId}/restaurant-approve`);
+      await apiRequest("POST", `/api/offers/${offerId}/admin-approve`);
     },
     onSuccess: () => {
       toast({ title: "Offer Approved", description: "Ready for payout." });
@@ -120,9 +120,9 @@ export default function OfferReviewPage() {
     },
   });
 
-  const restaurantRejectMutation = useMutation({
+  const adminRejectMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", `/api/offers/${offerId}/restaurant-reject`);
+      await apiRequest("POST", `/api/offers/${offerId}/admin-reject`);
     },
     onSuccess: () => {
       toast({ title: "Offer Rejected" });
@@ -213,7 +213,7 @@ ${offer.restaurantName}`;
   }
 
   const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
-  const isTerminal = ["vendor_rejected", "restaurant_rejected", "repaid", "closed"].includes(offer.status);
+  const isTerminal = ["vendor_rejected", "admin_rejected", "repaid", "closed"].includes(offer.status);
 
   const backLink = role === "vendor" ? "/cashouts" : "/offers";
   const pageTitle = role === "vendor" ? "Cashout Details" : "Offer Review";
@@ -248,9 +248,9 @@ ${offer.restaurantName}`;
                 <span className="font-medium">Vendor must accept or reject this offer</span>
               )}
               {offer.status === "vendor_accepted" && (
-                <span className="font-medium">Restaurant must approve or reject this offer</span>
+                <span className="font-medium">Admin must approve or reject this offer</span>
               )}
-              {offer.status === "restaurant_approved" && (
+              {offer.status === "admin_approved" && (
                 <span className="font-medium">Admin to send payout to vendor</span>
               )}
               {offer.status === "payout_sent" && (
@@ -387,29 +387,29 @@ ${offer.restaurantName}`;
           </>
         )}
 
-        {(role === "restaurant" || role === "admin") && offer.status === "vendor_accepted" && (
+        {role === "admin" && offer.status === "vendor_accepted" && (
           <>
             <Button
-              onClick={() => restaurantApproveMutation.mutate()}
-              disabled={restaurantApproveMutation.isPending}
-              data-testid="button-restaurant-approve"
+              onClick={() => adminApproveMutation.mutate()}
+              disabled={adminApproveMutation.isPending}
+              data-testid="button-admin-approve"
             >
               <CheckCircle className="w-4 h-4 mr-2" />
-              {restaurantApproveMutation.isPending ? "Approving..." : "Approve Offer"}
+              {adminApproveMutation.isPending ? "Approving..." : "Approve Offer"}
             </Button>
             <Button
               variant="outline"
-              onClick={() => restaurantRejectMutation.mutate()}
-              disabled={restaurantRejectMutation.isPending}
-              data-testid="button-restaurant-reject"
+              onClick={() => adminRejectMutation.mutate()}
+              disabled={adminRejectMutation.isPending}
+              data-testid="button-admin-reject"
             >
               <XCircle className="w-4 h-4 mr-2" />
-              {restaurantRejectMutation.isPending ? "Rejecting..." : "Reject Offer"}
+              {adminRejectMutation.isPending ? "Rejecting..." : "Reject Offer"}
             </Button>
           </>
         )}
 
-        {role === "admin" && offer.status === "restaurant_approved" && (
+        {role === "admin" && offer.status === "admin_approved" && (
           <Button
             onClick={() => markPayoutMutation.mutate()}
             disabled={markPayoutMutation.isPending}
