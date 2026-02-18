@@ -14,6 +14,7 @@ declare module "http" {
 
 app.use(
   express.json({
+    limit: "50mb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
@@ -60,6 +61,14 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  // Seed database
+  try {
+    const { seedDatabase } = await import("./seed");
+    await seedDatabase();
+  } catch (err) {
+    console.error("Seed error:", err);
+  }
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
