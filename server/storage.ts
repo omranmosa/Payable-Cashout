@@ -205,7 +205,7 @@ export class DatabaseStorage implements IStorage {
       .filter((inv) => inv.isEligible)
       .reduce((sum, inv) => sum + Number(inv.amountRemaining), 0);
 
-    const acceptedOffers = allOffers.filter((o) => o.status === "accepted");
+    const acceptedOffers = allOffers.filter((o) => ["restaurant_approved", "payout_sent", "repaid", "closed"].includes(o.status));
     const repayments = allLedger.filter((e) => e.type === "repayment");
 
     let financedOutstanding = 0;

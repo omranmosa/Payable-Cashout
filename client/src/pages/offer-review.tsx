@@ -10,12 +10,15 @@ import { useParams, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import {
   CheckCircle,
+  XCircle,
   Download,
   Copy,
   ArrowLeft,
   FileText,
   Calendar,
   DollarSign,
+  Send,
+  CreditCard,
 } from "lucide-react";
 
 type OfferDetail = {
@@ -43,6 +46,17 @@ type OfferDetail = {
   };
 };
 
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
+  vendor_accepted: { label: "Vendor Accepted", color: "bg-chart-1/10 text-chart-1" },
+  vendor_rejected: { label: "Vendor Rejected", color: "bg-destructive/10 text-destructive" },
+  restaurant_approved: { label: "Restaurant Approved", color: "bg-chart-2/10 text-chart-2" },
+  restaurant_rejected: { label: "Restaurant Rejected", color: "bg-destructive/10 text-destructive" },
+  payout_sent: { label: "Payout Sent", color: "bg-chart-3/10 text-chart-3" },
+  repaid: { label: "Repaid", color: "bg-chart-2/10 text-chart-2" },
+  closed: { label: "Closed", color: "bg-muted text-muted-foreground" },
+};
+
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -55,19 +69,95 @@ export default function OfferReviewPage() {
   const offerId = params.id;
   const { toast } = useToast();
   const { user } = useAuth();
-  const canAccept = user?.role === "admin" || user?.role === "restaurant";
+  const role = user?.role || "restaurant";
 
   const { data: offer, isLoading } = useQuery<OfferDetail>({
     queryKey: ["/api/offers", offerId],
   });
 
-  const acceptMutation = useMutation({
+  const vendorAcceptMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", `/api/offers/${offerId}/accept`);
+      await apiRequest("POST", `/api/offers/${offerId}/vendor-accept`);
     },
     onSuccess: () => {
-      toast({ title: "Offer Accepted" });
+      toast({ title: "Offer Accepted", description: "Waiting for restaurant approval." });
       queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/dashboard"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const vendorRejectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/offers/${offerId}/vendor-reject`);
+    },
+    onSuccess: () => {
+      toast({ title: "Offer Rejected" });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/vendor/dashboard"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const restaurantApproveMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/offers/${offerId}/restaurant-approve`);
+    },
+    onSuccess: () => {
+      toast({ title: "Offer Approved", description: "Ready for payout." });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const restaurantRejectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/offers/${offerId}/restaurant-reject`);
+    },
+    onSuccess: () => {
+      toast({ title: "Offer Rejected" });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const markPayoutMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/offers/${offerId}/mark-payout`);
+    },
+    onSuccess: () => {
+      toast({ title: "Payout Sent", description: "Payout has been recorded." });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Error", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const markRepaidMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("POST", `/api/offers/${offerId}/mark-repaid`);
+    },
+    onSuccess: () => {
+      toast({ title: "Repayment Received", description: "Offer has been marked as repaid." });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers", offerId] });
+      queryClient.invalidateQueries({ queryKey: ["/api/offers"] });
       queryClient.invalidateQueries({ queryKey: ["/api/dashboard"] });
     },
     onError: (err: Error) => {
@@ -122,18 +212,14 @@ ${offer.restaurantName}`;
     );
   }
 
-  const statusColor =
-    offer.status === "accepted"
-      ? "bg-chart-2/10 text-chart-2"
-      : offer.status === "pending"
-        ? "bg-chart-4/10 text-chart-4"
-        : "bg-muted text-muted-foreground";
+  const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
+  const isTerminal = ["vendor_rejected", "restaurant_rejected", "repaid", "closed"].includes(offer.status);
 
   return (
     <div className="p-6 space-y-6 max-w-2xl">
       <div className="flex items-center gap-3 flex-wrap">
         <Link href="/offers">
-          <Button size="icon" variant="ghost">
+          <Button size="icon" variant="ghost" data-testid="button-back-offers">
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
@@ -145,10 +231,32 @@ ${offer.restaurantName}`;
             {offer.vendorName} &middot; {offer.restaurantName}
           </p>
         </div>
-        <span className={`text-xs px-2 py-1 rounded-md font-medium ${statusColor}`} data-testid="text-offer-status">
-          {offer.status}
-        </span>
+        <Badge variant="secondary" className={statusInfo.color} data-testid="text-offer-status">
+          {statusInfo.label}
+        </Badge>
       </div>
+
+      {!isTerminal && (
+        <Card>
+          <CardContent className="py-3">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-muted-foreground">Next step:</span>
+              {offer.status === "draft" && (
+                <span className="font-medium">Vendor must accept or reject this offer</span>
+              )}
+              {offer.status === "vendor_accepted" && (
+                <span className="font-medium">Restaurant must approve or reject this offer</span>
+              )}
+              {offer.status === "restaurant_approved" && (
+                <span className="font-medium">Admin to send payout to vendor</span>
+              )}
+              {offer.status === "payout_sent" && (
+                <span className="font-medium">Awaiting repayment from restaurant</span>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <Card>
@@ -254,16 +362,72 @@ ${offer.restaurantName}`;
       </Card>
 
       <div className="flex items-center gap-2 flex-wrap">
-        {offer.status === "pending" && canAccept && (
+        {role === "vendor" && offer.status === "draft" && (
+          <>
+            <Button
+              onClick={() => vendorAcceptMutation.mutate()}
+              disabled={vendorAcceptMutation.isPending}
+              data-testid="button-vendor-accept"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" />
+              {vendorAcceptMutation.isPending ? "Accepting..." : "Accept Offer"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => vendorRejectMutation.mutate()}
+              disabled={vendorRejectMutation.isPending}
+              data-testid="button-vendor-reject"
+            >
+              <XCircle className="w-4 h-4 mr-2" />
+              {vendorRejectMutation.isPending ? "Rejecting..." : "Reject Offer"}
+            </Button>
+          </>
+        )}
+
+        {(role === "restaurant" || role === "admin") && offer.status === "vendor_accepted" && (
+          <>
+            <Button
+              onClick={() => restaurantApproveMutation.mutate()}
+              disabled={restaurantApproveMutation.isPending}
+              data-testid="button-restaurant-approve"
+            >
+              <CheckCircle className="w-4 h-4 mr-2" />
+              {restaurantApproveMutation.isPending ? "Approving..." : "Approve Offer"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => restaurantRejectMutation.mutate()}
+              disabled={restaurantRejectMutation.isPending}
+              data-testid="button-restaurant-reject"
+            >
+              <XCircle className="w-4 h-4 mr-2" />
+              {restaurantRejectMutation.isPending ? "Rejecting..." : "Reject Offer"}
+            </Button>
+          </>
+        )}
+
+        {role === "admin" && offer.status === "restaurant_approved" && (
           <Button
-            onClick={() => acceptMutation.mutate()}
-            disabled={acceptMutation.isPending}
-            data-testid="button-accept-offer"
+            onClick={() => markPayoutMutation.mutate()}
+            disabled={markPayoutMutation.isPending}
+            data-testid="button-mark-payout"
           >
-            <CheckCircle className="w-4 h-4 mr-2" />
-            {acceptMutation.isPending ? "Accepting..." : "Accept Offer"}
+            <Send className="w-4 h-4 mr-2" />
+            {markPayoutMutation.isPending ? "Processing..." : "Mark Payout Sent"}
           </Button>
         )}
+
+        {role === "admin" && offer.status === "payout_sent" && (
+          <Button
+            onClick={() => markRepaidMutation.mutate()}
+            disabled={markRepaidMutation.isPending}
+            data-testid="button-mark-repaid"
+          >
+            <CreditCard className="w-4 h-4 mr-2" />
+            {markRepaidMutation.isPending ? "Processing..." : "Mark Repaid"}
+          </Button>
+        )}
+
         <Button
           variant="outline"
           onClick={() => window.open(`/api/offers/${offerId}/pdf`, "_blank")}

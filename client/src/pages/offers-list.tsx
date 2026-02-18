@@ -15,6 +15,17 @@ type OfferItem = {
   createdAt: string;
 };
 
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
+  vendor_accepted: { label: "Vendor Accepted", color: "bg-chart-1/10 text-chart-1" },
+  vendor_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
+  restaurant_approved: { label: "Approved", color: "bg-chart-2/10 text-chart-2" },
+  restaurant_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
+  payout_sent: { label: "Payout Sent", color: "bg-chart-3/10 text-chart-3" },
+  repaid: { label: "Repaid", color: "bg-chart-2/10 text-chart-2" },
+  closed: { label: "Closed", color: "bg-muted text-muted-foreground" },
+};
+
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -66,12 +77,7 @@ export default function OffersListPage() {
       ) : (
         <div className="space-y-2">
           {offers.map((offer) => {
-            const statusColor =
-              offer.status === "accepted"
-                ? "bg-chart-2/10 text-chart-2"
-                : offer.status === "pending"
-                  ? "bg-chart-4/10 text-chart-4"
-                  : "bg-muted text-muted-foreground";
+            const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
             return (
               <Link key={offer.id} href={`/offers/${offer.id}`}>
                 <Card className="hover-elevate cursor-pointer">
@@ -95,9 +101,9 @@ export default function OffersListPage() {
                         <p className="text-sm font-semibold">
                           {formatCurrency(Number(offer.advanceAmount))}
                         </p>
-                        <span className={`text-xs px-2 py-0.5 rounded-md ${statusColor}`}>
-                          {offer.status}
-                        </span>
+                        <Badge variant="secondary" className={statusInfo.color}>
+                          {statusInfo.label}
+                        </Badge>
                       </div>
                       <ChevronRight className="w-4 h-4 text-muted-foreground" />
                     </div>

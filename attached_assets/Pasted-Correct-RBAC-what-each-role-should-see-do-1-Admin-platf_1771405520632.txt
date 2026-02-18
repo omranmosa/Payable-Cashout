@@ -1,0 +1,238 @@
+Correct RBAC (what each role should see + do)
+1) Admin (platform ops)
+
+Goal: operate the platform, troubleshoot, manage risk, reconcile money.
+
+Can view
+
+Global dashboard (all restaurants + all vendors)
+
+All restaurants, vendors, invoices (raw + normalized)
+
+All offers, assignments, payouts, repayments
+
+Full audit logs / activity timeline
+
+Can do
+
+Create/edit restaurants + vendors
+
+Configure pricing, limits, eligibility rules
+
+Upload invoices on behalf of any restaurant (optional)
+
+Create offers (optional — depends on your flow)
+
+Override eligibility / mark invoice disputed / hold
+
+Record payouts + repayments, reconcile
+
+Manage users + role assignment
+
+Cannot do (optional)
+
+You may restrict Admin from “accepting” an offer to avoid control issues; acceptance should be vendor + restaurant.
+
+2) Restaurant user (AP / finance team)
+
+Goal: confirm what’s owed, approve assignment, ensure payment goes to you on due date.
+
+Can view
+
+Only their restaurant
+
+Dashboard:
+
+total owed (to each vendor)
+
+upcoming due amounts (7/30/60 days)
+
+“assigned / financed” totals (what they must pay you)
+
+payment calendar (expected repayment dates)
+
+Invoices (their AP export):
+
+all open invoices for approved vendors
+
+invoice status, due date, amount remaining
+
+which invoices are “assigned/financed” and to whom
+
+Offers:
+
+offers involving their invoices
+
+offer status (pending vendor acceptance / pending restaurant approval / approved / rejected / repaid)
+
+Documents:
+
+assignment notice
+
+payee/remit-to update instructions
+
+bank details of payee (you) for settlement
+
+Can do
+
+Upload invoices (CSV) for their restaurant
+
+Map vendor in system to invoices (vendor matching)
+
+Approve / reject an offer that uses their invoices (restaurant consent)
+
+Confirm “payee update completed” (checkbox + optional attachment)
+
+Mark an invoice as disputed/held (and upload evidence) → freezes eligibility
+
+View and download notices/instructions
+
+Cannot do
+
+See other restaurants
+
+See admin ledger across platform
+
+Change platform pricing/limits
+
+Record payouts/repayments (unless you explicitly want restaurants to confirm repayment — usually admin-only)
+
+3) Vendor user (delivery company)
+
+Goal: cash out receivables early. They must be able to accept.
+
+Can view
+
+Only their vendor entity
+
+Vendor dashboard:
+
+total outstanding owed by restaurant
+
+eligible amount available to cash out
+
+offers pipeline (pending / approved / paid out / repaid)
+
+cash received to date (payout history)
+
+Invoices:
+
+invoices where they are the vendor (open + assigned + paid)
+
+invoice-level detail and due dates
+
+Offers:
+
+offers they are included in
+
+pricing/fee, repayment date, invoices covered
+
+Documents:
+
+assignment notice, agreement, payout receipt
+
+Can do
+
+Request cash-out (create a cash-out request) OR accept an offer (depending on your product flow)
+
+If your flow is: Vendor clicks “Cash Out” → platform generates offer → vendor accepts
+
+Or: Platform generates offer → vendor accepts
+
+Provide payout preferences (bank details, beneficiary name, IBAN)
+
+E-sign / accept terms
+
+Upload supporting docs (optional: invoice proof, statement)
+
+Cannot do
+
+Upload restaurant invoices (that’s restaurant-side)
+
+Change invoices
+
+Mark invoice eligibility
+
+Access admin ledger
+
+See other vendors’ data
+
+Important: If you remove vendor acceptance, you’re basically doing a “restaurant-initiated financing” product. That’s a different model (reverse factoring) and still usually requires supplier consent. For your described workflow, Vendor must accept.
+
+Offer status flow (so permissions are clear)
+
+Use a two-sided approval:
+
+Draft (created by vendor request or restaurant request/admin)
+
+Vendor Accepted (vendor agrees to discount + assigns proceeds)
+
+Restaurant Approved (restaurant agrees to pay you / update payee)
+
+Payout Sent (admin marks payout sent)
+
+Repayment Received (admin marks received)
+
+Closed
+
+Rejections:
+
+Vendor rejects → dead
+
+Restaurant rejects → dead
+
+Restaurant disputes invoice → freezes associated offers
+
+Pages and access (super concrete)
+
+/restaurant/*
+
+Restaurant: ✅
+
+Admin: ✅
+
+Vendor: ❌ (except read-only invoice status if you want, but usually no)
+
+/vendor/*
+
+Vendor: ✅
+
+Admin: ✅
+
+Restaurant: ❌
+
+/admin/ledger
+
+Admin: ✅
+
+Restaurant: ❌
+
+Vendor: ❌
+
+/offers/[id]
+
+Admin: ✅ (read + manage)
+
+Restaurant: ✅ (only if their restaurant is involved)
+
+Vendor: ✅ (only if they are the vendor in the offer)
+
+/invoices
+
+Restaurant: ✅ (only their invoices)
+
+Vendor: ✅ (only invoices where they are vendor)
+
+Admin: ✅ (all)
+
+Copy/paste message to your developer
+
+Here’s a tight message you can send him:
+
+Vendor role must NOT be read-only. Vendor must be able to accept cash-out offers (or initiate a cash-out request) because they’re assigning receivables and agreeing to discount/fee.
+
+Restaurant must be able to approve/reject offers that use their payables and confirm payee/remit-to update completion.
+
+Admin sees everything + manages ledger, payouts, repayments, risk rules.
+
+If you want, I can rewrite it as a formal “RBAC Requirements” spec in bullet + acceptance criteria style that he can plug straight into Jira.

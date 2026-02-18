@@ -146,16 +146,17 @@ export async function registerRoutes(
     try {
       const user = req.currentUser!;
       if (!user.vendorId) {
-        return res.json({ totalAssigned: 0, pendingOffers: 0, acceptedOffers: 0, invoiceCount: 0, recentOffers: [] });
+        return res.json({ totalAssigned: 0, eligibleCashout: 0, pendingOffers: 0, paidOut: 0, invoiceCount: 0, recentOffers: [] });
       }
       const vendorOffers = await storage.getOffersByVendor(user.vendorId);
       const invs = await storage.getInvoices(user.vendorId);
 
-      const totalAssigned = vendorOffers
-        .filter(o => o.status === "accepted")
+      const totalAssigned = invs.reduce((s, i) => s + Number(i.amountRemaining), 0);
+      const eligibleCashout = invs.filter(i => i.isEligible).reduce((s, i) => s + Number(i.amountRemaining), 0);
+      const pendingOffers = vendorOffers.filter(o => ["draft", "vendor_accepted"].includes(o.status)).length;
+      const paidOut = vendorOffers
+        .filter(o => ["payout_sent", "repaid", "closed"].includes(o.status))
         .reduce((s, o) => s + Number(o.advanceAmount), 0);
-      const pendingOffers = vendorOffers.filter(o => o.status === "pending").length;
-      const acceptedOffers = vendorOffers.filter(o => o.status === "accepted").length;
 
       const recentOffers = [];
       for (const o of vendorOffers.slice(0, 5)) {
@@ -171,8 +172,9 @@ export async function registerRoutes(
 
       return res.json({
         totalAssigned,
+        eligibleCashout,
         pendingOffers,
-        acceptedOffers,
+        paidOut,
         invoiceCount: invs.length,
         recentOffers,
       });
@@ -494,7 +496,7 @@ export async function registerRoutes(
         feeAmount: String(feeAmount.toFixed(2)),
         totalRepayment: String(totalRepayment.toFixed(2)),
         weightedDays: String(weightedDays.toFixed(2)),
-        status: "pending",
+        status: "draft",
         repaymentDate: maxDueDate.toISOString().split("T")[0],
       });
 
@@ -516,20 +518,118 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/offers/:id/accept", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+  app.post("/api/offers/:id/vendor-accept", requireAuth, requireRole("vendor"), async (req: Request, res: Response) => {
     try {
       const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
+      const user = req.currentUser!;
+      if (user.vendorId !== offer.vendorId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (offer.status !== "draft") {
+        return res.status(400).json({ message: "Offer is not in draft status" });
+      }
+      await storage.updateOfferStatus(offer.id, "vendor_accepted", new Date());
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
 
+  app.post("/api/offers/:id/vendor-reject", requireAuth, requireRole("vendor"), async (req: Request, res: Response) => {
+    try {
+      const offer = await storage.getOffer(req.params.id as string);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      const user = req.currentUser!;
+      if (user.vendorId !== offer.vendorId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (offer.status !== "draft") {
+        return res.status(400).json({ message: "Offer is not in draft status" });
+      }
+      await storage.updateOfferStatus(offer.id, "vendor_rejected");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/offers/:id/restaurant-approve", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+    try {
+      const offer = await storage.getOffer(req.params.id as string);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
       const user = req.currentUser!;
       if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
         return res.status(403).json({ message: "Forbidden" });
       }
-
-      if (offer.status !== "pending") {
-        return res.status(400).json({ message: "Offer already processed" });
+      if (offer.status !== "vendor_accepted") {
+        return res.status(400).json({ message: "Offer must be vendor-accepted first" });
       }
-      await storage.updateOfferStatus(offer.id, "accepted", new Date());
+      await storage.updateOfferStatus(offer.id, "restaurant_approved");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/offers/:id/restaurant-reject", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+    try {
+      const offer = await storage.getOffer(req.params.id as string);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      const user = req.currentUser!;
+      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (offer.status !== "vendor_accepted") {
+        return res.status(400).json({ message: "Offer must be vendor-accepted first" });
+      }
+      await storage.updateOfferStatus(offer.id, "vendor_rejected");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/offers/:id/mark-payout", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const offer = await storage.getOffer(req.params.id as string);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      if (offer.status !== "restaurant_approved") {
+        return res.status(400).json({ message: "Offer must be restaurant-approved first" });
+      }
+      await storage.updateOfferStatus(offer.id, "payout_sent");
+      await storage.createLedgerEntry({
+        offerId: offer.id,
+        type: "payout",
+        amount: offer.advanceAmount,
+        date: new Date().toISOString().split("T")[0],
+        method: req.body?.method || null,
+        reference: req.body?.reference || null,
+        notes: req.body?.notes || null,
+      });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/offers/:id/mark-repaid", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const offer = await storage.getOffer(req.params.id as string);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      if (offer.status !== "payout_sent") {
+        return res.status(400).json({ message: "Payout must be sent first" });
+      }
+      await storage.updateOfferStatus(offer.id, "repaid");
+      await storage.createLedgerEntry({
+        offerId: offer.id,
+        type: "repayment",
+        amount: offer.totalRepayment,
+        date: new Date().toISOString().split("T")[0],
+        method: req.body?.method || null,
+        reference: req.body?.reference || null,
+        notes: req.body?.notes || null,
+      });
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });

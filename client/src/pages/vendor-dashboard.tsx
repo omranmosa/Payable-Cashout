@@ -2,8 +2,19 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DollarSign, Clock, CheckCircle, FileText } from "lucide-react";
+import { DollarSign, Clock, CheckCircle, FileText, TrendingUp } from "lucide-react";
 import { Link } from "wouter";
+
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
+  vendor_accepted: { label: "Vendor Accepted", color: "bg-chart-1/10 text-chart-1" },
+  vendor_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
+  restaurant_approved: { label: "Approved", color: "bg-chart-2/10 text-chart-2" },
+  restaurant_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
+  payout_sent: { label: "Payout Sent", color: "bg-chart-3/10 text-chart-3" },
+  repaid: { label: "Repaid", color: "bg-chart-2/10 text-chart-2" },
+  closed: { label: "Closed", color: "bg-muted text-muted-foreground" },
+};
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("en-US", {
@@ -15,8 +26,9 @@ function formatCurrency(n: number) {
 export default function VendorDashboardPage() {
   const { data, isLoading } = useQuery<{
     totalAssigned: number;
+    eligibleCashout: number;
     pendingOffers: number;
-    acceptedOffers: number;
+    paidOut: number;
     invoiceCount: number;
     recentOffers: { id: string; restaurantName: string; advanceAmount: string; status: string; createdAt: string }[];
   }>({
@@ -38,10 +50,16 @@ export default function VendorDashboardPage() {
 
   const stats = [
     {
-      title: "Total Assigned",
+      title: "Total Outstanding",
       value: formatCurrency(data?.totalAssigned || 0),
       icon: DollarSign,
       testId: "stat-total-assigned",
+    },
+    {
+      title: "Eligible to Cash Out",
+      value: formatCurrency(data?.eligibleCashout || 0),
+      icon: TrendingUp,
+      testId: "stat-eligible-cashout",
     },
     {
       title: "Pending Offers",
@@ -50,22 +68,21 @@ export default function VendorDashboardPage() {
       testId: "stat-pending-offers",
     },
     {
-      title: "Accepted Offers",
-      value: String(data?.acceptedOffers || 0),
+      title: "Cash Received",
+      value: formatCurrency(data?.paidOut || 0),
       icon: CheckCircle,
-      testId: "stat-accepted-offers",
-    },
-    {
-      title: "My Invoices",
-      value: String(data?.invoiceCount || 0),
-      icon: FileText,
-      testId: "stat-invoice-count",
+      testId: "stat-paid-out",
     },
   ];
 
   return (
     <div className="p-6 space-y-6">
-      <h1 className="text-2xl font-semibold" data-testid="heading-vendor-dashboard">Vendor Dashboard</h1>
+      <div>
+        <h1 className="text-xl font-semibold" data-testid="heading-vendor-dashboard">Vendor Dashboard</h1>
+        <p className="text-sm text-muted-foreground mt-1">
+          {data?.invoiceCount || 0} invoices across your account
+        </p>
+      </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((stat) => (
@@ -94,29 +111,29 @@ export default function VendorDashboardPage() {
             <p className="text-sm text-muted-foreground" data-testid="text-no-offers">No offers yet</p>
           ) : (
             <div className="space-y-3">
-              {data.recentOffers.map((offer) => (
-                <Link key={offer.id} href={`/offers/${offer.id}`}>
-                  <div className="flex items-center justify-between gap-4 p-3 rounded-md border hover-elevate cursor-pointer" data-testid={`offer-row-${offer.id}`}>
-                    <div>
-                      <p className="font-medium text-sm">{offer.restaurantName}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {new Date(offer.createdAt).toLocaleDateString()}
-                      </p>
+              {data.recentOffers.map((offer) => {
+                const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
+                return (
+                  <Link key={offer.id} href={`/offers/${offer.id}`}>
+                    <div className="flex items-center justify-between gap-4 p-3 rounded-md border hover-elevate cursor-pointer" data-testid={`offer-row-${offer.id}`}>
+                      <div>
+                        <p className="font-medium text-sm">{offer.restaurantName}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(offer.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium">
+                          {formatCurrency(Number(offer.advanceAmount))}
+                        </span>
+                        <Badge variant="secondary" className={statusInfo.color} data-testid={`badge-status-${offer.id}`}>
+                          {statusInfo.label}
+                        </Badge>
+                      </div>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm font-medium">
-                        {formatCurrency(Number(offer.advanceAmount))}
-                      </span>
-                      <Badge
-                        variant={offer.status === "accepted" ? "default" : "secondary"}
-                        data-testid={`badge-status-${offer.id}`}
-                      >
-                        {offer.status}
-                      </Badge>
-                    </div>
-                  </div>
-                </Link>
-              ))}
+                  </Link>
+                );
+              })}
             </div>
           )}
         </CardContent>

@@ -1,7 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Badge } from "@/components/ui/badge";
 import { DollarSign, CheckCircle, Clock, AlertTriangle } from "lucide-react";
+import { Link } from "wouter";
+
+const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
+  draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
+  vendor_accepted: { label: "Vendor Accepted", color: "bg-chart-1/10 text-chart-1" },
+  vendor_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
+  restaurant_approved: { label: "Approved", color: "bg-chart-2/10 text-chart-2" },
+  restaurant_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
+  payout_sent: { label: "Payout Sent", color: "bg-chart-3/10 text-chart-3" },
+  repaid: { label: "Repaid", color: "bg-chart-2/10 text-chart-2" },
+  closed: { label: "Closed", color: "bg-muted text-muted-foreground" },
+};
 
 type DashboardStats = {
   totalOwed: number;
@@ -144,36 +157,33 @@ export default function DashboardPage() {
           </Card>
         ) : (
           <div className="space-y-2">
-            {stats.recentOffers.map((offer) => (
-              <Card key={offer.id} className="hover-elevate">
-                <CardContent className="flex items-center justify-between gap-4 py-3">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium truncate" data-testid={`text-offer-vendor-${offer.id}`}>
-                      {offer.vendorName}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {new Date(offer.createdAt).toLocaleDateString()}
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold">
-                      {formatCurrency(Number(offer.advanceAmount))}
-                    </p>
-                    <span
-                      className={`text-xs px-2 py-0.5 rounded-md ${
-                        offer.status === "accepted"
-                          ? "bg-chart-2/10 text-chart-2"
-                          : offer.status === "pending"
-                            ? "bg-chart-4/10 text-chart-4"
-                            : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {offer.status}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+            {stats.recentOffers.map((offer) => {
+              const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
+              return (
+                <Link key={offer.id} href={`/offers/${offer.id}`}>
+                  <Card className="hover-elevate cursor-pointer">
+                    <CardContent className="flex items-center justify-between gap-4 py-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium truncate" data-testid={`text-offer-vendor-${offer.id}`}>
+                          {offer.vendorName}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {new Date(offer.createdAt).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-semibold">
+                          {formatCurrency(Number(offer.advanceAmount))}
+                        </p>
+                        <Badge variant="secondary" className={statusInfo.color}>
+                          {statusInfo.label}
+                        </Badge>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>
