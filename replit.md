@@ -12,19 +12,37 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 
 ## Key Files
 - `shared/schema.ts` - All Drizzle table definitions (users, restaurants, vendors, invoices, offers, offerAssignments, ledgerEntries)
-- `server/routes.ts` - All API endpoints
+- `server/routes.ts` - All API endpoints with role-based middleware
 - `server/storage.ts` - Database storage layer
 - `server/eligibility.ts` - Invoice eligibility rules engine
 - `server/pdf.ts` - PDF generation for assignment notices
-- `server/seed.ts` - Seed data (17 invoices across 5 vendors, 1 restaurant)
-- `client/src/App.tsx` - Main app with auth, sidebar, routing
+- `server/seed.ts` - Seed data (3 users, 1 restaurant, 5 vendors, 17 invoices)
+- `client/src/App.tsx` - Main app with auth, role-based routing
 - `client/src/lib/auth.tsx` - Auth context/provider
+- `client/src/components/app-sidebar.tsx` - Role-aware sidebar navigation
 - `client/src/pages/` - All page components
 
-## Auth
+## Auth & Roles
 - Email + password with bcrypt hashing
 - Express-session with memory store
-- Demo login: demo@payables.com / password123
+- Three roles: **admin**, **restaurant**, **vendor**
+- Users table has `restaurantId` and `vendorId` to link users to entities
+
+### Role Permissions
+| Feature | Admin | Restaurant | Vendor |
+|---------|-------|------------|--------|
+| Dashboard | Yes (all data) | Yes (own restaurant) | Vendor Dashboard |
+| Upload Invoices | Yes | Yes (own restaurant) | No |
+| Vendor Invoices | Yes (all) | Yes (own restaurant) | My Invoices (read-only) |
+| Create Offers | Yes | Yes (own restaurant) | No |
+| Accept Offers | Yes | Yes (own restaurant) | No |
+| View Offers | Yes (all) | Yes (own) | Yes (own vendor) |
+| Admin Ledger | Yes | No | No |
+
+### Demo Accounts
+- Admin: admin@payables.com / password123
+- Restaurant: restaurant@payables.com / password123
+- Vendor: vendor@payables.com / password123
 
 ## Eligibility Rules
 - amount_remaining > 0
@@ -39,3 +57,4 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 
 ## Recent Changes
 - Initial MVP build (Feb 2026)
+- Added role-based access control with admin, restaurant, vendor roles (Feb 2026)

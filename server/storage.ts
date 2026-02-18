@@ -43,6 +43,8 @@ export interface IStorage {
   getInvoicesByIds(ids: string[]): Promise<Invoice[]>;
 
   getOffers(): Promise<Offer[]>;
+  getOffersByRestaurant(restaurantId: string): Promise<Offer[]>;
+  getOffersByVendor(vendorId: string): Promise<Offer[]>;
   getOffer(id: string): Promise<Offer | undefined>;
   createOffer(offer: InsertOffer): Promise<Offer>;
   updateOfferStatus(id: string, status: string, acceptedAt?: Date): Promise<void>;
@@ -54,7 +56,7 @@ export interface IStorage {
   createLedgerEntry(entry: InsertLedgerEntry): Promise<LedgerEntry>;
   getLedgerEntriesByOffer(offerId: string): Promise<LedgerEntry[]>;
 
-  getDashboardStats(): Promise<{
+  getDashboardStats(restaurantId?: string): Promise<{
     totalOwed: number;
     eligibleOwed: number;
     financedOutstanding: number;
@@ -137,6 +139,14 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(offers).orderBy(desc(offers.createdAt));
   }
 
+  async getOffersByRestaurant(restaurantId: string): Promise<Offer[]> {
+    return db.select().from(offers).where(eq(offers.restaurantId, restaurantId)).orderBy(desc(offers.createdAt));
+  }
+
+  async getOffersByVendor(vendorId: string): Promise<Offer[]> {
+    return db.select().from(offers).where(eq(offers.vendorId, vendorId)).orderBy(desc(offers.createdAt));
+  }
+
   async getOffer(id: string): Promise<Offer | undefined> {
     const [o] = await db.select().from(offers).where(eq(offers.id, id));
     return o;
@@ -178,9 +188,13 @@ export class DatabaseStorage implements IStorage {
       .where(eq(ledgerEntries.offerId, offerId));
   }
 
-  async getDashboardStats() {
-    const allInvoices = await db.select().from(invoices);
-    const allOffers = await db.select().from(offers);
+  async getDashboardStats(restaurantId?: string) {
+    const allInvoices = restaurantId
+      ? await db.select().from(invoices).where(eq(invoices.restaurantId, restaurantId))
+      : await db.select().from(invoices);
+    const allOffers = restaurantId
+      ? await db.select().from(offers).where(eq(offers.restaurantId, restaurantId))
+      : await db.select().from(offers);
     const allLedger = await db.select().from(ledgerEntries);
 
     const totalOwed = allInvoices.reduce(

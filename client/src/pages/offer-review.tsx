@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Separator } from "@/components/ui/separator";
 import { useToast } from "@/hooks/use-toast";
 import { useParams, Link } from "wouter";
+import { useAuth } from "@/lib/auth";
 import {
   CheckCircle,
   Download,
@@ -53,6 +54,8 @@ export default function OfferReviewPage() {
   const params = useParams<{ id: string }>();
   const offerId = params.id;
   const { toast } = useToast();
+  const { user } = useAuth();
+  const canAccept = user?.role === "admin" || user?.role === "restaurant";
 
   const { data: offer, isLoading } = useQuery<OfferDetail>({
     queryKey: ["/api/offers", offerId],
@@ -251,7 +254,7 @@ ${offer.restaurantName}`;
       </Card>
 
       <div className="flex items-center gap-2 flex-wrap">
-        {offer.status === "pending" && (
+        {offer.status === "pending" && canAccept && (
           <Button
             onClick={() => acceptMutation.mutate()}
             disabled={acceptMutation.isPending}

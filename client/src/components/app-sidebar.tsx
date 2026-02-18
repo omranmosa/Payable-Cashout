@@ -15,18 +15,41 @@ import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 
-const navItems = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
-  { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
-  { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
-  { title: "Offers", url: "/offers", icon: DollarSign },
-  { title: "Admin Ledger", url: "/admin/ledger", icon: BookOpen },
-];
+const navByRole: Record<string, { title: string; url: string; icon: any }[]> = {
+  admin: [
+    { title: "Dashboard", url: "/", icon: LayoutDashboard },
+    { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
+    { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
+    { title: "Offers", url: "/offers", icon: DollarSign },
+    { title: "Admin Ledger", url: "/admin/ledger", icon: BookOpen },
+  ],
+  restaurant: [
+    { title: "Dashboard", url: "/", icon: LayoutDashboard },
+    { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
+    { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
+    { title: "Offers", url: "/offers", icon: DollarSign },
+  ],
+  vendor: [
+    { title: "Dashboard", url: "/", icon: LayoutDashboard },
+    { title: "My Invoices", url: "/vendor/invoices", icon: FileText },
+    { title: "Offers", url: "/offers", icon: DollarSign },
+  ],
+};
+
+const roleLabels: Record<string, string> = {
+  admin: "Admin",
+  restaurant: "Restaurant",
+  vendor: "Vendor",
+};
 
 export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
+
+  const role = user?.role || "restaurant";
+  const navItems = navByRole[role] || navByRole.restaurant;
 
   const initials = user?.name
     ? user.name
@@ -85,7 +108,10 @@ export function AppSidebar() {
             <AvatarFallback className="text-xs">{initials}</AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{user?.name}</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-medium truncate">{user?.name}</p>
+              <Badge variant="secondary" data-testid="badge-user-role">{roleLabels[role] || role}</Badge>
+            </div>
             <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
           </div>
           <Button

@@ -11,15 +11,17 @@ import { AuthProvider, useAuth } from "@/lib/auth";
 import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
+import VendorDashboardPage from "@/pages/vendor-dashboard";
 import UploadPage from "@/pages/upload";
 import VendorListPage from "@/pages/vendor-list";
 import VendorInvoicesPage from "@/pages/vendor-invoices";
+import VendorMyInvoicesPage from "@/pages/vendor-my-invoices";
 import OfferReviewPage from "@/pages/offer-review";
 import OffersListPage from "@/pages/offers-list";
 import AdminLedgerPage from "@/pages/admin-ledger";
 import { Skeleton } from "@/components/ui/skeleton";
 
-function Router() {
+function AdminRouter() {
   return (
     <Switch>
       <Route path="/" component={DashboardPage} />
@@ -32,6 +34,41 @@ function Router() {
       <Route component={NotFound} />
     </Switch>
   );
+}
+
+function RestaurantRouter() {
+  return (
+    <Switch>
+      <Route path="/" component={DashboardPage} />
+      <Route path="/restaurants/:id/upload" component={UploadPage} />
+      <Route path="/restaurants/:id/vendors" component={VendorListPage} />
+      <Route path="/restaurants/:id/vendors/:vendorId" component={VendorInvoicesPage} />
+      <Route path="/offers" component={OffersListPage} />
+      <Route path="/offers/:id" component={OfferReviewPage} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function VendorRouter() {
+  return (
+    <Switch>
+      <Route path="/" component={VendorDashboardPage} />
+      <Route path="/vendor/invoices" component={VendorMyInvoicesPage} />
+      <Route path="/offers" component={OffersListPage} />
+      <Route path="/offers/:id" component={OfferReviewPage} />
+      <Route component={NotFound} />
+    </Switch>
+  );
+}
+
+function RoleRouter() {
+  const { user } = useAuth();
+  const role = user?.role || "restaurant";
+
+  if (role === "admin") return <AdminRouter />;
+  if (role === "vendor") return <VendorRouter />;
+  return <RestaurantRouter />;
 }
 
 function AuthenticatedApp() {
@@ -50,7 +87,7 @@ function AuthenticatedApp() {
             <ThemeToggle />
           </header>
           <main className="flex-1 overflow-auto">
-            <Router />
+            <RoleRouter />
           </main>
         </div>
       </div>

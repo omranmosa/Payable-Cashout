@@ -6,6 +6,7 @@ import { generateAssignmentNoticePdf } from "./pdf";
 import bcrypt from "bcryptjs";
 import session from "express-session";
 import MemoryStore from "memorystore";
+import type { User } from "@shared/schema";
 
 const SessionStore = MemoryStore(session);
 
@@ -15,11 +16,36 @@ declare module "express-session" {
   }
 }
 
-function requireAuth(req: Request, res: Response, next: Function) {
+declare global {
+  namespace Express {
+    interface Request {
+      currentUser?: User;
+    }
+  }
+}
+
+async function requireAuth(req: Request, res: Response, next: Function) {
   if (!req.session.userId) {
     return res.status(401).json({ message: "Unauthorized" });
   }
+  const user = await storage.getUser(req.session.userId);
+  if (!user) {
+    return res.status(401).json({ message: "User not found" });
+  }
+  req.currentUser = user;
   next();
+}
+
+function requireRole(...roles: string[]) {
+  return (req: Request, res: Response, next: Function) => {
+    if (!req.currentUser) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+    if (!roles.includes(req.currentUser.role)) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+    next();
+  };
 }
 
 export async function registerRoutes(
@@ -48,9 +74,9 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Email already registered" });
       }
       const hashed = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({ name, email, password: hashed });
+      const user = await storage.createUser({ name, email, password: hashed, role: "restaurant" });
       req.session.userId = user.id;
-      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, restaurantId: user.restaurantId, vendorId: user.vendorId });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
@@ -68,7 +94,7 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Invalid credentials" });
       }
       req.session.userId = user.id;
-      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, restaurantId: user.restaurantId, vendorId: user.vendorId });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
@@ -82,7 +108,7 @@ export async function registerRoutes(
     if (!user) {
       return res.status(401).json({ message: "User not found" });
     }
-    return res.json({ id: user.id, name: user.name, email: user.email, role: user.role });
+    return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, restaurantId: user.restaurantId, vendorId: user.vendorId });
   });
 
   app.post("/api/auth/logout", (req: Request, res: Response) => {
@@ -90,11 +116,14 @@ export async function registerRoutes(
     return res.json({ ok: true });
   });
 
-  // Dashboard
-  app.get("/api/dashboard", requireAuth, async (_req: Request, res: Response) => {
+  // Dashboard - admin and restaurant only
+  app.get("/api/dashboard", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
     try {
-      const stats = await storage.getDashboardStats();
-      const allOffers = await storage.getOffers();
+      const user = req.currentUser!;
+      const stats = await storage.getDashboardStats(user.role === "restaurant" ? user.restaurantId || undefined : undefined);
+      const allOffers = user.role === "restaurant" && user.restaurantId
+        ? await storage.getOffersByRestaurant(user.restaurantId)
+        : await storage.getOffers();
       const recentOffers = [];
       for (const o of allOffers.slice(0, 5)) {
         const vendor = await storage.getVendor(o.vendorId);
@@ -112,9 +141,54 @@ export async function registerRoutes(
     }
   });
 
-  // Restaurants
-  app.get("/api/restaurants", requireAuth, async (_req: Request, res: Response) => {
+  // Vendor dashboard
+  app.get("/api/vendor/dashboard", requireAuth, requireRole("vendor"), async (req: Request, res: Response) => {
     try {
+      const user = req.currentUser!;
+      if (!user.vendorId) {
+        return res.json({ totalAssigned: 0, pendingOffers: 0, acceptedOffers: 0, invoiceCount: 0, recentOffers: [] });
+      }
+      const vendorOffers = await storage.getOffersByVendor(user.vendorId);
+      const invs = await storage.getInvoices(user.vendorId);
+
+      const totalAssigned = vendorOffers
+        .filter(o => o.status === "accepted")
+        .reduce((s, o) => s + Number(o.advanceAmount), 0);
+      const pendingOffers = vendorOffers.filter(o => o.status === "pending").length;
+      const acceptedOffers = vendorOffers.filter(o => o.status === "accepted").length;
+
+      const recentOffers = [];
+      for (const o of vendorOffers.slice(0, 5)) {
+        const restaurant = await storage.getRestaurant(o.restaurantId);
+        recentOffers.push({
+          id: o.id,
+          restaurantName: restaurant?.name || "Unknown",
+          advanceAmount: o.advanceAmount,
+          status: o.status,
+          createdAt: o.createdAt,
+        });
+      }
+
+      return res.json({
+        totalAssigned,
+        pendingOffers,
+        acceptedOffers,
+        invoiceCount: invs.length,
+        recentOffers,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Restaurants
+  app.get("/api/restaurants", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      if (user.role === "restaurant" && user.restaurantId) {
+        const r = await storage.getRestaurant(user.restaurantId);
+        return res.json(r ? [r] : []);
+      }
       const rests = await storage.getRestaurants();
       return res.json(rests);
     } catch (err: any) {
@@ -123,14 +197,21 @@ export async function registerRoutes(
   });
 
   // Vendors
-  app.get("/api/restaurants/:id/vendors", requireAuth, async (req: Request, res: Response) => {
+  app.get("/api/restaurants/:id/vendors", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
     try {
-      const restaurantId = req.params.id;
-      let actualId = restaurantId;
-      if (restaurantId === "default") {
-        const rests = await storage.getRestaurants();
-        if (rests.length === 0) return res.json([]);
-        actualId = rests[0].id;
+      const user = req.currentUser!;
+      let actualId = req.params.id as string;
+      if (actualId === "default") {
+        if (user.role === "restaurant" && user.restaurantId) {
+          actualId = user.restaurantId;
+        } else {
+          const rests = await storage.getRestaurants();
+          if (rests.length === 0) return res.json([]);
+          actualId = rests[0].id;
+        }
+      }
+      if (user.role === "restaurant" && user.restaurantId && actualId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
       }
       const vdrs = await storage.getVendors(actualId);
       const result = [];
@@ -152,8 +233,15 @@ export async function registerRoutes(
 
   app.get("/api/vendors/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const vendor = await storage.getVendor(req.params.id);
+      const vendor = await storage.getVendor(req.params.id as string);
       if (!vendor) return res.status(404).json({ message: "Vendor not found" });
+      const user = req.currentUser!;
+      if (user.role === "vendor" && user.vendorId !== vendor.id) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (user.role === "restaurant" && user.restaurantId && vendor.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
       return res.json(vendor);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
@@ -162,27 +250,45 @@ export async function registerRoutes(
 
   app.get("/api/vendors/:id/invoices", requireAuth, async (req: Request, res: Response) => {
     try {
-      const invs = await storage.getInvoices(req.params.id);
+      const user = req.currentUser!;
+      const vendor = await storage.getVendor(req.params.id as string);
+      if (!vendor) return res.status(404).json({ message: "Vendor not found" });
+      if (user.role === "vendor" && user.vendorId !== vendor.id) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (user.role === "restaurant" && user.restaurantId && vendor.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const invs = await storage.getInvoices(req.params.id as string);
       return res.json(invs);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  // CSV Upload
-  app.post("/api/invoices/upload", requireAuth, async (req: Request, res: Response) => {
+  // CSV Upload - admin and restaurant only
+  app.post("/api/invoices/upload", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
     try {
+      const user = req.currentUser!;
       let { restaurantId, mapping, rows } = req.body;
       if (!restaurantId || !mapping || !rows) {
         return res.status(400).json({ message: "Missing data" });
       }
 
       if (restaurantId === "default" || !restaurantId) {
-        const rests = await storage.getRestaurants();
-        if (rests.length === 0) {
-          return res.status(400).json({ message: "No restaurant configured" });
+        if (user.role === "restaurant" && user.restaurantId) {
+          restaurantId = user.restaurantId;
+        } else {
+          const rests = await storage.getRestaurants();
+          if (rests.length === 0) {
+            return res.status(400).json({ message: "No restaurant configured" });
+          }
+          restaurantId = rests[0].id;
         }
-        restaurantId = rests[0].id;
+      }
+
+      if (user.role === "restaurant" && user.restaurantId && restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
       }
 
       let count = 0;
@@ -246,9 +352,17 @@ export async function registerRoutes(
   });
 
   // Offers
-  app.get("/api/offers", requireAuth, async (_req: Request, res: Response) => {
+  app.get("/api/offers", requireAuth, async (req: Request, res: Response) => {
     try {
-      const allOffers = await storage.getOffers();
+      const user = req.currentUser!;
+      let allOffers;
+      if (user.role === "restaurant" && user.restaurantId) {
+        allOffers = await storage.getOffersByRestaurant(user.restaurantId);
+      } else if (user.role === "vendor" && user.vendorId) {
+        allOffers = await storage.getOffersByVendor(user.vendorId);
+      } else {
+        allOffers = await storage.getOffers();
+      }
       const result = [];
       for (const o of allOffers) {
         const vendor = await storage.getVendor(o.vendorId);
@@ -271,8 +385,16 @@ export async function registerRoutes(
 
   app.get("/api/offers/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const offer = await storage.getOffer(req.params.id);
+      const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
+
+      const user = req.currentUser!;
+      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (user.role === "vendor" && user.vendorId && offer.vendorId !== user.vendorId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
 
       const vendor = await storage.getVendor(offer.vendorId);
       const restaurant = await storage.getRestaurant(offer.restaurantId);
@@ -305,11 +427,16 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/offers", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/offers", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
     try {
       const { restaurantId, vendorId, invoiceIds, advanceAmount } = req.body;
       if (!restaurantId || !vendorId || !invoiceIds?.length || !advanceAmount) {
         return res.status(400).json({ message: "Missing data" });
+      }
+
+      const user = req.currentUser!;
+      if (user.role === "restaurant" && user.restaurantId && restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
       }
 
       const selectedInvoices = await storage.getInvoicesByIds(invoiceIds);
@@ -389,10 +516,16 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/offers/:id/accept", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/offers/:id/accept", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
     try {
-      const offer = await storage.getOffer(req.params.id);
+      const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
+
+      const user = req.currentUser!;
+      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+
       if (offer.status !== "pending") {
         return res.status(400).json({ message: "Offer already processed" });
       }
@@ -404,10 +537,18 @@ export async function registerRoutes(
   });
 
   // PDF generation
-  app.get("/api/offers/:id/pdf", async (req: Request, res: Response) => {
+  app.get("/api/offers/:id/pdf", requireAuth, async (req: Request, res: Response) => {
     try {
-      const offer = await storage.getOffer(req.params.id);
+      const offer = await storage.getOffer(req.params.id as string);
       if (!offer) return res.status(404).json({ message: "Offer not found" });
+
+      const user = req.currentUser!;
+      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (user.role === "vendor" && user.vendorId && offer.vendorId !== user.vendorId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
 
       const vendor = await storage.getVendor(offer.vendorId);
       const restaurant = await storage.getRestaurant(offer.restaurantId);
@@ -450,8 +591,8 @@ export async function registerRoutes(
     }
   });
 
-  // Ledger
-  app.get("/api/admin/ledger", requireAuth, async (_req: Request, res: Response) => {
+  // Ledger - admin only
+  app.get("/api/admin/ledger", requireAuth, requireRole("admin"), async (_req: Request, res: Response) => {
     try {
       const entries = await storage.getLedgerEntries();
       const allOffers = await storage.getOffers();
@@ -498,7 +639,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/admin/ledger", requireAuth, async (req: Request, res: Response) => {
+  app.post("/api/admin/ledger", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
       const { offerId, type, amount, date, method, reference } = req.body;
       if (!offerId || !type || !amount || !date) {

@@ -11,15 +11,6 @@ export async function seedDatabase() {
   console.log("Seeding database...");
 
   const hashedPw = await bcrypt.hash("password123", 10);
-  const [demoUser] = await db
-    .insert(users)
-    .values({
-      name: "Jane Smith",
-      email: "demo@payables.com",
-      password: hashedPw,
-      role: "admin",
-    })
-    .returning();
 
   const [restaurant] = await db
     .insert(restaurants)
@@ -49,6 +40,38 @@ export async function seedDatabase() {
       .returning();
     createdVendors.push(v);
   }
+
+  const [adminUser] = await db
+    .insert(users)
+    .values({
+      name: "Admin User",
+      email: "admin@payables.com",
+      password: hashedPw,
+      role: "admin",
+    })
+    .returning();
+
+  const [restaurantUser] = await db
+    .insert(users)
+    .values({
+      name: "Jane Smith",
+      email: "restaurant@payables.com",
+      password: hashedPw,
+      role: "restaurant",
+      restaurantId: restaurant.id,
+    })
+    .returning();
+
+  const [vendorUser] = await db
+    .insert(users)
+    .values({
+      name: "Mike Chen",
+      email: "vendor@payables.com",
+      password: hashedPw,
+      role: "vendor",
+      vendorId: createdVendors[0].id,
+    })
+    .returning();
 
   const now = new Date();
   const addDays = (d: Date, days: number) => {
@@ -107,4 +130,8 @@ export async function seedDatabase() {
   }
 
   console.log("Seed data inserted successfully.");
+  console.log("Demo accounts:");
+  console.log("  Admin:      admin@payables.com / password123");
+  console.log("  Restaurant: restaurant@payables.com / password123");
+  console.log("  Vendor:     vendor@payables.com / password123");
 }

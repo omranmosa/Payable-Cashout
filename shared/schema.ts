@@ -18,13 +18,18 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   password: text("password").notNull(),
   name: text("name").notNull(),
-  role: text("role").notNull().default("user"),
+  role: text("role").notNull().default("restaurant"),
+  restaurantId: varchar("restaurant_id").references(() => restaurants.id),
+  vendorId: varchar("vendor_id").references(() => vendors.id),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
   email: true,
   password: true,
   name: true,
+  role: true,
+  restaurantId: true,
+  vendorId: true,
 });
 export type InsertUser = z.infer<typeof insertUserSchema>;
 export type User = typeof users.$inferSelect;
