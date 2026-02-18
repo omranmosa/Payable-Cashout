@@ -19,6 +19,8 @@ import VendorMyInvoicesPage from "@/pages/vendor-my-invoices";
 import OfferReviewPage from "@/pages/offer-review";
 import OffersListPage from "@/pages/offers-list";
 import AdminLedgerPage from "@/pages/admin-ledger";
+import FeeRatesPage from "@/pages/fee-rates";
+import FinancingPage from "@/pages/financing";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function AdminRouter() {
@@ -30,6 +32,7 @@ function AdminRouter() {
       <Route path="/restaurants/:id/vendors/:vendorId" component={VendorInvoicesPage} />
       <Route path="/offers" component={OffersListPage} />
       <Route path="/offers/:id" component={OfferReviewPage} />
+      <Route path="/admin/fee-rates" component={FeeRatesPage} />
       <Route path="/admin/ledger" component={AdminLedgerPage} />
       <Route component={NotFound} />
     </Switch>
@@ -43,8 +46,7 @@ function RestaurantRouter() {
       <Route path="/restaurants/:id/upload" component={UploadPage} />
       <Route path="/restaurants/:id/vendors" component={VendorListPage} />
       <Route path="/restaurants/:id/vendors/:vendorId" component={VendorInvoicesPage} />
-      <Route path="/offers" component={OffersListPage} />
-      <Route path="/offers/:id" component={OfferReviewPage} />
+      <Route path="/financing" component={FinancingPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -55,8 +57,8 @@ function VendorRouter() {
     <Switch>
       <Route path="/" component={VendorDashboardPage} />
       <Route path="/vendor/invoices" component={VendorMyInvoicesPage} />
-      <Route path="/offers" component={OffersListPage} />
-      <Route path="/offers/:id" component={OfferReviewPage} />
+      <Route path="/cashouts" component={OffersListPage} />
+      <Route path="/cashouts/:id" component={OfferReviewPage} />
       <Route component={NotFound} />
     </Switch>
   );

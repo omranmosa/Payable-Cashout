@@ -146,25 +146,40 @@ export async function registerRoutes(
     try {
       const user = req.currentUser!;
       if (!user.vendorId) {
-        return res.json({ totalAssigned: 0, eligibleCashout: 0, pendingOffers: 0, paidOut: 0, invoiceCount: 0, recentOffers: [] });
+        return res.json({ totalAssigned: 0, eligibleCashout: 0, estimatedFee: 0, netCashout: 0, pendingCashouts: 0, paidOut: 0, invoiceCount: 0, recentCashouts: [] });
       }
       const vendorOffers = await storage.getOffersByVendor(user.vendorId);
       const invs = await storage.getInvoices(user.vendorId);
+      const rates = await storage.getFeeRates();
 
       const totalAssigned = invs.reduce((s, i) => s + Number(i.amountRemaining), 0);
-      const eligibleCashout = invs.filter(i => i.isEligible).reduce((s, i) => s + Number(i.amountRemaining), 0);
-      const pendingOffers = vendorOffers.filter(o => ["draft", "vendor_accepted"].includes(o.status)).length;
+      const eligibleInvs = invs.filter(i => i.isEligible);
+      const eligibleCashout = eligibleInvs.reduce((s, i) => s + Number(i.amountRemaining), 0);
+
+      let estimatedFee = 0;
+      for (const inv of eligibleInvs) {
+        const daysTodue = Math.max(0, Math.ceil((new Date(inv.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+        const matchingRate = rates.find(r => daysTodue >= r.minDays && daysTodue <= r.maxDays);
+        const rate = matchingRate ? Number(matchingRate.ratePer30d) : 0.015;
+        const amt = Number(inv.amountRemaining);
+        estimatedFee += amt * rate * (daysTodue / 30);
+      }
+
+      const netCashout = eligibleCashout - estimatedFee;
+      const pendingCashouts = vendorOffers.filter(o => ["draft", "vendor_accepted"].includes(o.status)).length;
       const paidOut = vendorOffers
         .filter(o => ["payout_sent", "repaid", "closed"].includes(o.status))
         .reduce((s, o) => s + Number(o.advanceAmount), 0);
 
-      const recentOffers = [];
+      const recentCashouts = [];
       for (const o of vendorOffers.slice(0, 5)) {
         const restaurant = await storage.getRestaurant(o.restaurantId);
-        recentOffers.push({
+        recentCashouts.push({
           id: o.id,
           restaurantName: restaurant?.name || "Unknown",
           advanceAmount: o.advanceAmount,
+          feeAmount: o.feeAmount,
+          netPayout: String((Number(o.advanceAmount) - Number(o.feeAmount)).toFixed(2)),
           status: o.status,
           createdAt: o.createdAt,
         });
@@ -173,10 +188,12 @@ export async function registerRoutes(
       return res.json({
         totalAssigned,
         eligibleCashout,
-        pendingOffers,
+        estimatedFee: Number(estimatedFee.toFixed(2)),
+        netCashout: Number(netCashout.toFixed(2)),
+        pendingCashouts,
         paidOut,
         invoiceCount: invs.length,
-        recentOffers,
+        recentCashouts,
       });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
@@ -357,10 +374,11 @@ export async function registerRoutes(
   app.get("/api/offers", requireAuth, async (req: Request, res: Response) => {
     try {
       const user = req.currentUser!;
+      if (user.role === "restaurant") {
+        return res.status(403).json({ message: "Restaurant users do not have access to offers" });
+      }
       let allOffers;
-      if (user.role === "restaurant" && user.restaurantId) {
-        allOffers = await storage.getOffersByRestaurant(user.restaurantId);
-      } else if (user.role === "vendor" && user.vendorId) {
+      if (user.role === "vendor" && user.vendorId) {
         allOffers = await storage.getOffersByVendor(user.vendorId);
       } else {
         allOffers = await storage.getOffers();
@@ -458,10 +476,12 @@ export async function registerRoutes(
       }
 
       const restaurant = await storage.getRestaurant(restaurantId);
-      const rate = Number(restaurant?.defaultRatePer30d || "0.015");
+      const allRates = await storage.getFeeRates();
+      const fallbackRate = Number(restaurant?.defaultRatePer30d || "0.015");
 
       let totalWeightedAmount = 0;
       let weightedDaysSum = 0;
+      let feeAmount = 0;
 
       for (const inv of eligible) {
         const daysTodue = Math.max(
@@ -474,6 +494,9 @@ export async function registerRoutes(
         const amt = Number(inv.amountRemaining);
         totalWeightedAmount += amt;
         weightedDaysSum += amt * daysTodue;
+        const matchingRate = allRates.find(r => daysTodue >= r.minDays && daysTodue <= r.maxDays);
+        const rate = matchingRate ? Number(matchingRate.ratePer30d) : fallbackRate;
+        feeAmount += amt * rate * (daysTodue / 30);
       }
 
       const weightedDays =
@@ -481,7 +504,8 @@ export async function registerRoutes(
           ? weightedDaysSum / totalWeightedAmount
           : 0;
 
-      const feeAmount = advanceAmount * rate * (weightedDays / 30);
+      const proportion = advanceAmount / totalWeightedAmount;
+      feeAmount = feeAmount * proportion;
       const totalRepayment = advanceAmount + feeAmount;
 
       const maxDueDate = eligible.reduce((max, inv) => {
@@ -630,6 +654,121 @@ export async function registerRoutes(
         reference: req.body?.reference || null,
         notes: req.body?.notes || null,
       });
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Restaurant Financing - shows financed items with split
+  app.get("/api/financing", requireAuth, requireRole("restaurant"), async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      if (!user.restaurantId) return res.json([]);
+      const allOffers = await storage.getOffersByRestaurant(user.restaurantId);
+      const financed = allOffers.filter(o => ["payout_sent", "repaid", "closed"].includes(o.status));
+      const result = [];
+      for (const o of financed) {
+        const vendor = await storage.getVendor(o.vendorId);
+        const ledger = await storage.getLedgerEntriesByOffer(o.id);
+        const repayments = ledger.filter(e => e.type === "repayment");
+        const totalRepaid = repayments.reduce((s, e) => s + Number(e.amount), 0);
+        result.push({
+          id: o.id,
+          vendorName: vendor?.name || "Unknown",
+          advanceAmount: o.advanceAmount,
+          feeAmount: o.feeAmount,
+          totalRepayment: o.totalRepayment,
+          totalRepaid: String(totalRepaid.toFixed(2)),
+          repaymentDate: o.repaymentDate,
+          status: o.status,
+          createdAt: o.createdAt,
+        });
+      }
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Restaurant repayment upload
+  app.post("/api/financing/:offerId/repayment", requireAuth, requireRole("restaurant"), async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      const offer = await storage.getOffer(req.params.offerId as string);
+      if (!offer) return res.status(404).json({ message: "Offer not found" });
+      if (user.restaurantId && offer.restaurantId !== user.restaurantId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      if (offer.status !== "payout_sent") {
+        return res.status(400).json({ message: "Offer is not awaiting repayment" });
+      }
+      const { amount, reference, method } = req.body || {};
+      if (!amount) {
+        return res.status(400).json({ message: "Amount is required" });
+      }
+      await storage.createLedgerEntry({
+        offerId: offer.id,
+        type: "repayment",
+        amount: String(Number(amount).toFixed(2)),
+        date: new Date().toISOString().split("T")[0],
+        method: method || "bank_transfer",
+        reference: reference || null,
+        notes: `Submitted by restaurant`,
+      });
+      await storage.updateOfferStatus(offer.id, "repaid");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // Fee Rates - admin only
+  app.get("/api/fee-rates", requireAuth, async (_req: Request, res: Response) => {
+    try {
+      const rates = await storage.getFeeRates();
+      return res.json(rates);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/fee-rates", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { label, minDays, maxDays, ratePer30d } = req.body;
+      if (!label || minDays === undefined || maxDays === undefined || !ratePer30d) {
+        return res.status(400).json({ message: "Missing required fields" });
+      }
+      const rate = await storage.createFeeRate({
+        label,
+        minDays: Number(minDays),
+        maxDays: Number(maxDays),
+        ratePer30d: String(ratePer30d),
+      });
+      return res.json(rate);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/fee-rates/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { label, minDays, maxDays, ratePer30d } = req.body;
+      const updates: any = {};
+      if (label !== undefined) updates.label = label;
+      if (minDays !== undefined) updates.minDays = Number(minDays);
+      if (maxDays !== undefined) updates.maxDays = Number(maxDays);
+      if (ratePer30d !== undefined) updates.ratePer30d = String(ratePer30d);
+      const rate = await storage.updateFeeRate(req.params.id as string, updates);
+      return res.json(rate);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.delete("/api/fee-rates/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      await storage.deleteFeeRate(req.params.id as string);
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });

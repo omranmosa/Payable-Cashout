@@ -4,6 +4,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { DollarSign, CheckCircle, Clock, AlertTriangle } from "lucide-react";
 import { Link } from "wouter";
+import { useAuth } from "@/lib/auth";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
   draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
@@ -68,6 +69,9 @@ function formatCurrency(n: number) {
 }
 
 export default function DashboardPage() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+
   const { data, isLoading } = useQuery<DashboardStats>({
     queryKey: ["/api/dashboard"],
   });
@@ -145,48 +149,50 @@ export default function DashboardPage() {
         />
       </div>
 
-      <div>
-        <h2 className="text-base font-semibold mb-3">Recent Offers</h2>
-        {stats.recentOffers.length === 0 ? (
-          <Card>
-            <CardContent className="py-8 text-center">
-              <p className="text-muted-foreground text-sm">
-                No offers yet. Upload invoices and create your first cashout offer.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <div className="space-y-2">
-            {stats.recentOffers.map((offer) => {
-              const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
-              return (
-                <Link key={offer.id} href={`/offers/${offer.id}`}>
-                  <Card className="hover-elevate cursor-pointer">
-                    <CardContent className="flex items-center justify-between gap-4 py-3">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate" data-testid={`text-offer-vendor-${offer.id}`}>
-                          {offer.vendorName}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {new Date(offer.createdAt).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-semibold">
-                          {formatCurrency(Number(offer.advanceAmount))}
-                        </p>
-                        <Badge variant="secondary" className={statusInfo.color}>
-                          {statusInfo.label}
-                        </Badge>
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </div>
+      {isAdmin && (
+        <div>
+          <h2 className="text-base font-semibold mb-3">Recent Offers</h2>
+          {stats.recentOffers.length === 0 ? (
+            <Card>
+              <CardContent className="py-8 text-center">
+                <p className="text-muted-foreground text-sm">
+                  No offers yet. Upload invoices and create your first cashout offer.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {stats.recentOffers.map((offer) => {
+                const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
+                return (
+                  <Link key={offer.id} href={`/offers/${offer.id}`}>
+                    <Card className="hover-elevate cursor-pointer">
+                      <CardContent className="flex items-center justify-between gap-4 py-3">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate" data-testid={`text-offer-vendor-${offer.id}`}>
+                            {offer.vendorName}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(offer.createdAt).toLocaleDateString()}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold">
+                            {formatCurrency(Number(offer.advanceAmount))}
+                          </p>
+                          <Badge variant="secondary" className={statusInfo.color}>
+                            {statusInfo.label}
+                          </Badge>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

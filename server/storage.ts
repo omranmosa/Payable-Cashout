@@ -13,6 +13,8 @@ import {
   type InsertOfferAssignment,
   type LedgerEntry,
   type InsertLedgerEntry,
+  type FeeRate,
+  type InsertFeeRate,
   users,
   restaurants,
   vendors,
@@ -20,6 +22,7 @@ import {
   offers,
   offerAssignments,
   ledgerEntries,
+  feeRates,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, sql, desc, inArray } from "drizzle-orm";
@@ -62,6 +65,13 @@ export interface IStorage {
     financedOutstanding: number;
     overdue: number;
   }>;
+
+  getFeeRates(): Promise<FeeRate[]>;
+  getFeeRate(id: string): Promise<FeeRate | undefined>;
+  createFeeRate(rate: InsertFeeRate): Promise<FeeRate>;
+  updateFeeRate(id: string, rate: Partial<InsertFeeRate>): Promise<FeeRate>;
+  deleteFeeRate(id: string): Promise<void>;
+  getFeeRateForDays(days: number): Promise<FeeRate | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -226,6 +236,34 @@ export class DatabaseStorage implements IStorage {
     }
 
     return { totalOwed, eligibleOwed, financedOutstanding, overdue };
+  }
+
+  async getFeeRates(): Promise<FeeRate[]> {
+    return db.select().from(feeRates).orderBy(feeRates.minDays);
+  }
+
+  async getFeeRate(id: string): Promise<FeeRate | undefined> {
+    const [rate] = await db.select().from(feeRates).where(eq(feeRates.id, id));
+    return rate;
+  }
+
+  async createFeeRate(rate: InsertFeeRate): Promise<FeeRate> {
+    const [created] = await db.insert(feeRates).values(rate).returning();
+    return created;
+  }
+
+  async updateFeeRate(id: string, rate: Partial<InsertFeeRate>): Promise<FeeRate> {
+    const [updated] = await db.update(feeRates).set(rate).where(eq(feeRates.id, id)).returning();
+    return updated;
+  }
+
+  async deleteFeeRate(id: string): Promise<void> {
+    await db.delete(feeRates).where(eq(feeRates.id, id));
+  }
+
+  async getFeeRateForDays(days: number): Promise<FeeRate | undefined> {
+    const allRates = await this.getFeeRates();
+    return allRates.find(r => days >= r.minDays && days <= r.maxDays);
   }
 }
 

@@ -10,7 +10,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Upload, FileText, BookOpen, LogOut, DollarSign } from "lucide-react";
+import { LayoutDashboard, Upload, FileText, BookOpen, LogOut, DollarSign, Percent, Banknote } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -23,18 +23,19 @@ const navByRole: Record<string, { title: string; url: string; icon: any }[]> = {
     { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
     { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
     { title: "Offers", url: "/offers", icon: DollarSign },
+    { title: "Fee Rates", url: "/admin/fee-rates", icon: Percent },
     { title: "Admin Ledger", url: "/admin/ledger", icon: BookOpen },
   ],
   restaurant: [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
     { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
     { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
-    { title: "Offers", url: "/offers", icon: DollarSign },
+    { title: "Financing", url: "/financing", icon: Banknote },
   ],
   vendor: [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
     { title: "My Invoices", url: "/vendor/invoices", icon: FileText },
-    { title: "Offers", url: "/offers", icon: DollarSign },
+    { title: "Cashouts", url: "/cashouts", icon: DollarSign },
   ],
 };
 

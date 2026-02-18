@@ -2,17 +2,17 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { DollarSign, Clock, CheckCircle, FileText, TrendingUp } from "lucide-react";
+import { DollarSign, Clock, CheckCircle, TrendingUp, FileText } from "lucide-react";
 import { Link } from "wouter";
 
 const STATUS_CONFIG: Record<string, { label: string; color: string }> = {
-  draft: { label: "Draft", color: "bg-chart-4/10 text-chart-4" },
-  vendor_accepted: { label: "Vendor Accepted", color: "bg-chart-1/10 text-chart-1" },
+  draft: { label: "Pending", color: "bg-chart-4/10 text-chart-4" },
+  vendor_accepted: { label: "Accepted", color: "bg-chart-1/10 text-chart-1" },
   vendor_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
   restaurant_approved: { label: "Approved", color: "bg-chart-2/10 text-chart-2" },
   restaurant_rejected: { label: "Rejected", color: "bg-destructive/10 text-destructive" },
-  payout_sent: { label: "Payout Sent", color: "bg-chart-3/10 text-chart-3" },
-  repaid: { label: "Repaid", color: "bg-chart-2/10 text-chart-2" },
+  payout_sent: { label: "Paid", color: "bg-chart-3/10 text-chart-3" },
+  repaid: { label: "Completed", color: "bg-chart-2/10 text-chart-2" },
   closed: { label: "Closed", color: "bg-muted text-muted-foreground" },
 };
 
@@ -27,10 +27,12 @@ export default function VendorDashboardPage() {
   const { data, isLoading } = useQuery<{
     totalAssigned: number;
     eligibleCashout: number;
-    pendingOffers: number;
+    estimatedFee: number;
+    netCashout: number;
+    pendingCashouts: number;
     paidOut: number;
     invoiceCount: number;
-    recentOffers: { id: string; restaurantName: string; advanceAmount: string; status: string; createdAt: string }[];
+    recentCashouts: { id: string; restaurantName: string; advanceAmount: string; feeAmount: string; netPayout: string; status: string; createdAt: string }[];
   }>({
     queryKey: ["/api/vendor/dashboard"],
   });
@@ -50,22 +52,23 @@ export default function VendorDashboardPage() {
 
   const stats = [
     {
-      title: "Total Outstanding",
+      title: "Total Payable",
       value: formatCurrency(data?.totalAssigned || 0),
       icon: DollarSign,
       testId: "stat-total-assigned",
     },
     {
-      title: "Eligible to Cash Out",
-      value: formatCurrency(data?.eligibleCashout || 0),
+      title: "Available for Cashout",
+      value: formatCurrency(data?.netCashout || 0),
+      subtitle: data?.estimatedFee ? `Fee: ${formatCurrency(data.estimatedFee)}` : undefined,
       icon: TrendingUp,
-      testId: "stat-eligible-cashout",
+      testId: "stat-net-cashout",
     },
     {
-      title: "Pending Offers",
-      value: String(data?.pendingOffers || 0),
+      title: "Pending Cashouts",
+      value: String(data?.pendingCashouts || 0),
       icon: Clock,
-      testId: "stat-pending-offers",
+      testId: "stat-pending-cashouts",
     },
     {
       title: "Cash Received",
@@ -97,6 +100,9 @@ export default function VendorDashboardPage() {
               <div className="text-2xl font-bold" data-testid={stat.testId}>
                 {stat.value}
               </div>
+              {stat.subtitle && (
+                <p className="text-xs text-muted-foreground mt-1">{stat.subtitle}</p>
+              )}
             </CardContent>
           </Card>
         ))}
@@ -104,29 +110,37 @@ export default function VendorDashboardPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Recent Offers</CardTitle>
+          <CardTitle className="text-lg">Recent Cashouts</CardTitle>
         </CardHeader>
         <CardContent>
-          {(!data?.recentOffers || data.recentOffers.length === 0) ? (
-            <p className="text-sm text-muted-foreground" data-testid="text-no-offers">No offers yet</p>
+          {(!data?.recentCashouts || data.recentCashouts.length === 0) ? (
+            <div className="text-center py-4">
+              <FileText className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground" data-testid="text-no-cashouts">No cashouts yet</p>
+            </div>
           ) : (
             <div className="space-y-3">
-              {data.recentOffers.map((offer) => {
-                const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
+              {data.recentCashouts.map((cashout) => {
+                const statusInfo = STATUS_CONFIG[cashout.status] || { label: cashout.status, color: "bg-muted text-muted-foreground" };
                 return (
-                  <Link key={offer.id} href={`/offers/${offer.id}`}>
-                    <div className="flex items-center justify-between gap-4 p-3 rounded-md border hover-elevate cursor-pointer" data-testid={`offer-row-${offer.id}`}>
+                  <Link key={cashout.id} href={`/cashouts/${cashout.id}`}>
+                    <div className="flex items-center justify-between gap-4 p-3 rounded-md border hover-elevate cursor-pointer" data-testid={`cashout-row-${cashout.id}`}>
                       <div>
-                        <p className="font-medium text-sm">{offer.restaurantName}</p>
+                        <p className="font-medium text-sm">{cashout.restaurantName}</p>
                         <p className="text-xs text-muted-foreground">
-                          {new Date(offer.createdAt).toLocaleDateString()}
+                          {new Date(cashout.createdAt).toLocaleDateString()}
                         </p>
                       </div>
                       <div className="flex items-center gap-3">
-                        <span className="text-sm font-medium">
-                          {formatCurrency(Number(offer.advanceAmount))}
-                        </span>
-                        <Badge variant="secondary" className={statusInfo.color} data-testid={`badge-status-${offer.id}`}>
+                        <div className="text-right">
+                          <span className="text-sm font-medium">
+                            {formatCurrency(Number(cashout.netPayout))}
+                          </span>
+                          <p className="text-xs text-muted-foreground">
+                            Fee: {formatCurrency(Number(cashout.feeAmount))}
+                          </p>
+                        </div>
+                        <Badge variant="secondary" className={statusInfo.color} data-testid={`badge-status-${cashout.id}`}>
                           {statusInfo.label}
                         </Badge>
                       </div>

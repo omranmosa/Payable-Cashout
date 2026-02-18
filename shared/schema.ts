@@ -120,3 +120,16 @@ export const ledgerEntries = pgTable("ledger_entries", {
 export const insertLedgerEntrySchema = createInsertSchema(ledgerEntries).omit({ id: true, createdAt: true });
 export type InsertLedgerEntry = z.infer<typeof insertLedgerEntrySchema>;
 export type LedgerEntry = typeof ledgerEntries.$inferSelect;
+
+export const feeRates = pgTable("fee_rates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  label: text("label").notNull(),
+  minDays: integer("min_days").notNull(),
+  maxDays: integer("max_days").notNull(),
+  ratePer30d: numeric("rate_per_30d", { precision: 8, scale: 6 }).notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertFeeRateSchema = createInsertSchema(feeRates).omit({ id: true, createdAt: true });
+export type InsertFeeRate = z.infer<typeof insertFeeRateSchema>;
+export type FeeRate = typeof feeRates.$inferSelect;

@@ -215,17 +215,20 @@ ${offer.restaurantName}`;
   const statusInfo = STATUS_CONFIG[offer.status] || { label: offer.status, color: "bg-muted text-muted-foreground" };
   const isTerminal = ["vendor_rejected", "restaurant_rejected", "repaid", "closed"].includes(offer.status);
 
+  const backLink = role === "vendor" ? "/cashouts" : "/offers";
+  const pageTitle = role === "vendor" ? "Cashout Details" : "Offer Review";
+
   return (
     <div className="p-6 space-y-6 max-w-2xl">
       <div className="flex items-center gap-3 flex-wrap">
-        <Link href="/offers">
+        <Link href={backLink}>
           <Button size="icon" variant="ghost" data-testid="button-back-offers">
             <ArrowLeft className="w-4 h-4" />
           </Button>
         </Link>
         <div className="flex-1">
           <h1 className="text-xl font-semibold" data-testid="text-offer-title">
-            Offer Review
+            {pageTitle}
           </h1>
           <p className="text-sm text-muted-foreground">
             {offer.vendorName} &middot; {offer.restaurantName}
