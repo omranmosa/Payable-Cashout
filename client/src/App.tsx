@@ -21,12 +21,17 @@ import OffersListPage from "@/pages/offers-list";
 import AdminLedgerPage from "@/pages/admin-ledger";
 import FeeRatesPage from "@/pages/fee-rates";
 import FinancingPage from "@/pages/financing";
+import AdminRestaurantsPage from "@/pages/admin-restaurants";
+import AdminVendorsPage from "@/pages/admin-vendors";
+import VendorRequestCashoutPage from "@/pages/vendor-request-cashout";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function AdminRouter() {
   return (
     <Switch>
       <Route path="/" component={DashboardPage} />
+      <Route path="/admin/restaurants" component={AdminRestaurantsPage} />
+      <Route path="/admin/vendors" component={AdminVendorsPage} />
       <Route path="/restaurants/:id/upload" component={UploadPage} />
       <Route path="/restaurants/:id/vendors" component={VendorListPage} />
       <Route path="/restaurants/:id/vendors/:vendorId" component={VendorInvoicesPage} />
@@ -57,6 +62,7 @@ function VendorRouter() {
     <Switch>
       <Route path="/" component={VendorDashboardPage} />
       <Route path="/vendor/invoices" component={VendorMyInvoicesPage} />
+      <Route path="/cashouts/new" component={VendorRequestCashoutPage} />
       <Route path="/cashouts" component={OffersListPage} />
       <Route path="/cashouts/:id" component={OfferReviewPage} />
       <Route component={NotFound} />

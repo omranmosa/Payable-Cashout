@@ -114,6 +114,7 @@ export const ledgerEntries = pgTable("ledger_entries", {
   method: text("method"),
   reference: text("reference"),
   notes: text("notes"),
+  fileUrl: text("file_url"),
   createdAt: timestamp("created_at").defaultNow(),
 });
 

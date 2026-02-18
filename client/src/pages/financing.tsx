@@ -7,8 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Banknote, Send, DollarSign } from "lucide-react";
-import { useState } from "react";
+import { Banknote, Send, DollarSign, Paperclip } from "lucide-react";
+import { useState, useRef } from "react";
 
 type FinancedItem = {
   id: string;
@@ -33,14 +33,27 @@ function RepaymentForm({ item, onClose }: { item: FinancedItem; onClose: () => v
   const { toast } = useToast();
   const remaining = Number(item.totalRepayment) - Number(item.totalRepaid);
   const [reference, setReference] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const mutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", `/api/financing/${item.id}/repayment`, {
-        amount: remaining,
-        reference,
-        method: "bank_transfer",
+      const formData = new FormData();
+      formData.append("amount", String(remaining));
+      formData.append("reference", reference);
+      formData.append("method", "bank_transfer");
+      if (file) {
+        formData.append("file", file);
+      }
+      const res = await fetch(`/api/financing/${item.id}/repayment`, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
       });
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.message || "Failed to submit repayment");
+      }
     },
     onSuccess: () => {
       toast({ title: "Repayment Submitted", description: "Your transfer has been recorded." });
@@ -70,6 +83,33 @@ function RepaymentForm({ item, onClose }: { item: FinancedItem; onClose: () => v
             placeholder="e.g. Wire transfer #12345"
             data-testid="input-repayment-reference"
           />
+        </div>
+        <div>
+          <Label className="text-xs">Attach File (optional)</Label>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept=".pdf,.png,.jpg,.jpeg,.csv,.xlsx"
+            onChange={(e) => setFile(e.target.files?.[0] || null)}
+            data-testid="input-repayment-file"
+          />
+          <div className="flex items-center gap-2 flex-wrap mt-1">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              data-testid="button-attach-file"
+            >
+              <Paperclip className="w-4 h-4 mr-2" />
+              {file ? file.name : "Choose File"}
+            </Button>
+            {file && (
+              <Button variant="ghost" size="sm" onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ""; }} data-testid="button-remove-file">
+                Remove
+              </Button>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           <Button

@@ -37,7 +37,9 @@ export interface IStorage {
   createRestaurant(r: InsertRestaurant): Promise<Restaurant>;
 
   getVendors(restaurantId: string): Promise<Vendor[]>;
+  getAllVendors(): Promise<Vendor[]>;
   getVendor(id: string): Promise<Vendor | undefined>;
+  createVendor(v: InsertVendor): Promise<Vendor>;
   getOrCreateVendor(restaurantId: string, name: string): Promise<Vendor>;
 
   getInvoices(vendorId: string): Promise<Invoice[]>;
@@ -108,9 +110,18 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(vendors).where(eq(vendors.restaurantId, restaurantId));
   }
 
+  async getAllVendors(): Promise<Vendor[]> {
+    return db.select().from(vendors);
+  }
+
   async getVendor(id: string): Promise<Vendor | undefined> {
     const [v] = await db.select().from(vendors).where(eq(vendors.id, id));
     return v;
+  }
+
+  async createVendor(v: InsertVendor): Promise<Vendor> {
+    const [vendor] = await db.insert(vendors).values(v).returning();
+    return vendor;
   }
 
   async getOrCreateVendor(restaurantId: string, name: string): Promise<Vendor> {

@@ -6,7 +6,20 @@ import { generateAssignmentNoticePdf } from "./pdf";
 import bcrypt from "bcryptjs";
 import session from "express-session";
 import MemoryStore from "memorystore";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 import type { User } from "@shared/schema";
+
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => cb(null, uploadsDir),
+    filename: (_req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+});
 
 const SessionStore = MemoryStore(session);
 
@@ -215,7 +228,55 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/restaurants", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { name, defaultRatePer30d, bankName, bankAccountNumber, bankRoutingNumber, bankAccountName } = req.body;
+      if (!name) return res.status(400).json({ message: "Name is required" });
+      const restaurant = await storage.createRestaurant({
+        name,
+        defaultRatePer30d: defaultRatePer30d || "0.015",
+        bankName: bankName || null,
+        bankAccountNumber: bankAccountNumber || null,
+        bankRoutingNumber: bankRoutingNumber || null,
+        bankAccountName: bankAccountName || null,
+      });
+      return res.json(restaurant);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
   // Vendors
+  app.get("/api/vendors", requireAuth, requireRole("admin"), async (_req: Request, res: Response) => {
+    try {
+      const allVendors = await storage.getAllVendors();
+      const result = [];
+      for (const v of allVendors) {
+        const restaurant = await storage.getRestaurant(v.restaurantId);
+        result.push({
+          ...v,
+          restaurantName: restaurant?.name || "Unknown",
+        });
+      }
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/vendors", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { name, restaurantId } = req.body;
+      if (!name || !restaurantId) return res.status(400).json({ message: "Name and restaurant are required" });
+      const restaurant = await storage.getRestaurant(restaurantId);
+      if (!restaurant) return res.status(400).json({ message: "Restaurant not found" });
+      const vendor = await storage.createVendor({ name, restaurantId });
+      return res.json(vendor);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
   app.get("/api/restaurants/:id/vendors", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
     try {
       const user = req.currentUser!;
@@ -447,7 +508,7 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/offers", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+  app.post("/api/offers", requireAuth, requireRole("admin", "vendor"), async (req: Request, res: Response) => {
     try {
       const { restaurantId, vendorId, invoiceIds, advanceAmount } = req.body;
       if (!restaurantId || !vendorId || !invoiceIds?.length || !advanceAmount) {
@@ -455,11 +516,21 @@ export async function registerRoutes(
       }
 
       const user = req.currentUser!;
-      if (user.role === "restaurant" && user.restaurantId && restaurantId !== user.restaurantId) {
+      if (user.role === "vendor" && user.vendorId && vendorId !== user.vendorId) {
         return res.status(403).json({ message: "Forbidden" });
       }
 
+      const vendor = await storage.getVendor(vendorId);
+      if (!vendor) return res.status(400).json({ message: "Vendor not found" });
+      if (vendor.restaurantId !== restaurantId) {
+        return res.status(400).json({ message: "Restaurant/vendor mismatch" });
+      }
+
       const selectedInvoices = await storage.getInvoicesByIds(invoiceIds);
+      const allBelongToVendor = selectedInvoices.every(i => i.vendorId === vendorId);
+      if (!allBelongToVendor) {
+        return res.status(400).json({ message: "Some invoices do not belong to the selected vendor" });
+      }
       const eligible = selectedInvoices.filter((i) => i.isEligible);
       if (eligible.length === 0) {
         return res.status(400).json({ message: "No eligible invoices" });
@@ -691,8 +762,14 @@ export async function registerRoutes(
     }
   });
 
+  app.use("/uploads", requireAuth, (req: Request, res: Response, next: any) => {
+    const filePath = path.join(uploadsDir, req.path);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ message: "File not found" });
+    return res.sendFile(filePath);
+  });
+
   // Restaurant repayment upload
-  app.post("/api/financing/:offerId/repayment", requireAuth, requireRole("restaurant"), async (req: Request, res: Response) => {
+  app.post("/api/financing/:offerId/repayment", requireAuth, requireRole("restaurant"), upload.single("file"), async (req: Request, res: Response) => {
     try {
       const user = req.currentUser!;
       const offer = await storage.getOffer(req.params.offerId as string);
@@ -707,6 +784,7 @@ export async function registerRoutes(
       if (!amount) {
         return res.status(400).json({ message: "Amount is required" });
       }
+      const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
       await storage.createLedgerEntry({
         offerId: offer.id,
         type: "repayment",
@@ -715,6 +793,7 @@ export async function registerRoutes(
         method: method || "bank_transfer",
         reference: reference || null,
         notes: `Submitted by restaurant`,
+        fileUrl,
       });
       await storage.updateOfferStatus(offer.id, "repaid");
       return res.json({ ok: true });

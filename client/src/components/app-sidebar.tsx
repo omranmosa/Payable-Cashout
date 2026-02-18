@@ -10,7 +10,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Upload, FileText, BookOpen, LogOut, DollarSign, Percent, Banknote } from "lucide-react";
+import { LayoutDashboard, Upload, FileText, BookOpen, LogOut, DollarSign, Percent, Banknote, Store, Building2, Plus } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -20,6 +20,8 @@ import { Badge } from "@/components/ui/badge";
 const navByRole: Record<string, { title: string; url: string; icon: any }[]> = {
   admin: [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
+    { title: "Restaurants", url: "/admin/restaurants", icon: Store },
+    { title: "Vendors", url: "/admin/vendors", icon: Building2 },
     { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
     { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
     { title: "Offers", url: "/offers", icon: DollarSign },
@@ -36,6 +38,7 @@ const navByRole: Record<string, { title: string; url: string; icon: any }[]> = {
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
     { title: "My Invoices", url: "/vendor/invoices", icon: FileText },
     { title: "Cashouts", url: "/cashouts", icon: DollarSign },
+    { title: "Request Cashout", url: "/cashouts/new", icon: Plus },
   ],
 };
 

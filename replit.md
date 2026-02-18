@@ -9,6 +9,7 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 - **Database**: PostgreSQL with Drizzle ORM
 - **PDF**: pdf-lib for Assignment Notice generation
 - **CSV**: papaparse for client-side CSV parsing
+- **File Upload**: multer for repayment file attachments (stored in /uploads)
 
 ## Key Files
 - `shared/schema.ts` - All Drizzle table definitions (users, restaurants, vendors, invoices, offers, offerAssignments, ledgerEntries, feeRates)
@@ -32,11 +33,13 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 | Feature | Admin | Restaurant | Vendor |
 |---------|-------|------------|--------|
 | Dashboard | Yes (all data) | Yes (own restaurant, no recent offers) | Vendor Dashboard |
+| Manage Restaurants | Yes (create) | No | No |
+| Manage Vendors | Yes (create) | No | No |
 | Upload Invoices | Yes | Yes (own restaurant) | No |
 | Vendor Invoices | Yes (all) | Yes (own restaurant) | My Invoices (read-only) |
-| Create Offers | Yes | No | No |
+| Create Offers | Yes | No | Yes (request cashout) |
 | View Offers | Yes (all) | No (403 blocked) | Cashouts (own vendor) |
-| Financing | No | Yes (financed items + repayment upload) | No |
+| Financing | No | Yes (financed items + repayment with file upload) | No |
 | Fee Rates | Yes (CRUD) | No | No |
 | Admin Ledger | Yes | No | No |
 
@@ -46,9 +49,9 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 - Vendor: vendor@payables.com / password123
 
 ## Sidebar Navigation by Role
-- **Admin**: Dashboard, Invoices, Vendors, Offers, Fee Rates, Admin Ledger
-- **Restaurant**: Dashboard, Invoices, Vendors, Financing
-- **Vendor**: Vendor Dashboard, My Invoices, Cashouts
+- **Admin**: Dashboard, Restaurants, Vendors, Upload Invoices, Vendor Invoices, Offers, Fee Rates, Admin Ledger
+- **Restaurant**: Dashboard, Upload Invoices, Vendor Invoices, Financing
+- **Vendor**: Dashboard, My Invoices, Cashouts, Request Cashout
 
 ## Eligibility Rules
 - amount_remaining > 0
@@ -66,7 +69,21 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 ## Fee Calculation
 - Per-invoice fee = invoiceAmount * matchedRate * (daysTodue / 30)
 - Total fee scaled by proportion: (advanceAmount / totalEligible) * sumOfInvoiceFees
-- Vendor dashboard shows estimated fee and net cashout in real-time
+- Vendor dashboard and cashout request page show estimated fee and net cashout in real-time
+
+## Vendor Cashout Flow
+1. Vendor navigates to /cashouts/new
+2. Selects eligible invoices via checkboxes
+3. Enters desired cashout amount (up to total eligible)
+4. System calculates estimated fee and net cashout
+5. Vendor submits request, creating a draft offer
+6. Admin can review, approve, and process payout
+
+## Restaurant Repayment Flow
+1. Restaurant views financed items on /financing page
+2. Clicks "Submit Repayment" on items with status payout_sent
+3. Enters reference number and optionally attaches a file (PDF, image, CSV, etc.)
+4. System records ledger entry with file URL and marks offer as repaid
 
 ## Recent Changes
 - Initial MVP build (Feb 2026)
@@ -76,3 +93,9 @@ Invoice financing platform for restaurants. Users upload vendor invoices via CSV
 - Renamed vendor "Offers" to "Cashouts" with net amount display (Feb 2026)
 - Updated fee calculation to use admin-managed rate brackets by tenor (Feb 2026)
 - Backend: /api/offers returns 403 for restaurant role (Feb 2026)
+- Added admin restaurant management page (create restaurants) (Feb 2026)
+- Added admin vendor management page (create vendors) (Feb 2026)
+- Added file upload support to restaurant repayment form (multer) (Feb 2026)
+- Vendors can now request cashouts via /cashouts/new page (Feb 2026)
+- Offer creation changed from admin+restaurant to admin+vendor (Feb 2026)
+- Added server-side validation for vendor cashout: invoice ownership + restaurant/vendor match (Feb 2026)
