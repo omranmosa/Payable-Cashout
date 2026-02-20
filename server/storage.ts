@@ -1,82 +1,131 @@
 import {
   type User,
   type InsertUser,
-  type Restaurant,
-  type InsertRestaurant,
-  type Vendor,
-  type InsertVendor,
-  type Invoice,
-  type InsertInvoice,
-  type Offer,
-  type InsertOffer,
-  type OfferAssignment,
-  type InsertOfferAssignment,
+  type VendorMaster,
+  type InsertVendorMaster,
+  type Counterparty,
+  type InsertCounterparty,
+  type VendorCounterpartyMapping,
+  type InsertVendorCounterpartyMapping,
+  type VendorPricingSchedule,
+  type InsertVendorPricingSchedule,
+  type VendorPricingTier,
+  type InsertVendorPricingTier,
+  type DeliveryRecord,
+  type InsertDeliveryRecord,
+  type Cashout,
+  type InsertCashout,
+  type CashoutAllocation,
+  type InsertCashoutAllocation,
+  type CashoutDelivery,
+  type InsertCashoutDelivery,
   type LedgerEntry,
   type InsertLedgerEntry,
-  type FeeRate,
-  type InsertFeeRate,
+  type NotificationAttempt,
+  type InsertNotificationAttempt,
   users,
-  restaurants,
-  vendors,
-  invoices,
-  offers,
-  offerAssignments,
+  vendorMasters,
+  counterparties,
+  vendorCounterpartyMappings,
+  vendorPricingSchedules,
+  vendorPricingTiers,
+  deliveryRecords,
+  cashouts,
+  cashoutAllocations,
+  cashoutDeliveries,
   ledgerEntries,
-  feeRates,
+  notificationAttempts,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, sql, desc, inArray } from "drizzle-orm";
+import { eq, and, sql, desc, inArray, count } from "drizzle-orm";
 
 export interface IStorage {
+  // Users
   getUser(id: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
 
-  getRestaurants(): Promise<Restaurant[]>;
-  getRestaurant(id: string): Promise<Restaurant | undefined>;
-  createRestaurant(r: InsertRestaurant): Promise<Restaurant>;
+  // VendorMasters
+  getVendorMasters(): Promise<VendorMaster[]>;
+  getVendorMaster(id: string): Promise<VendorMaster | undefined>;
+  getVendorMasterByCrn(crn: string): Promise<VendorMaster | undefined>;
+  createVendorMaster(vm: InsertVendorMaster): Promise<VendorMaster>;
+  updateVendorMaster(id: string, vm: Partial<InsertVendorMaster>): Promise<VendorMaster>;
 
-  getVendors(restaurantId: string): Promise<Vendor[]>;
-  getAllVendors(): Promise<Vendor[]>;
-  getVendor(id: string): Promise<Vendor | undefined>;
-  createVendor(v: InsertVendor): Promise<Vendor>;
-  getOrCreateVendor(restaurantId: string, name: string): Promise<Vendor>;
+  // Counterparties
+  getCounterparties(): Promise<Counterparty[]>;
+  getCounterparty(id: string): Promise<Counterparty | undefined>;
+  createCounterparty(cp: InsertCounterparty): Promise<Counterparty>;
+  updateCounterparty(id: string, cp: Partial<InsertCounterparty>): Promise<Counterparty>;
 
-  getInvoices(vendorId: string): Promise<Invoice[]>;
-  getInvoice(id: string): Promise<Invoice | undefined>;
-  createInvoice(inv: InsertInvoice): Promise<Invoice>;
-  getInvoicesByIds(ids: string[]): Promise<Invoice[]>;
+  // VendorCounterpartyMappings
+  getVendorCounterpartyMappingsByCounterparty(counterpartyId: string): Promise<VendorCounterpartyMapping[]>;
+  getVendorCounterpartyMappingsByVendorMaster(vendorMasterId: string): Promise<VendorCounterpartyMapping[]>;
+  createVendorCounterpartyMapping(m: InsertVendorCounterpartyMapping): Promise<VendorCounterpartyMapping>;
+  updateVendorCounterpartyMappingStatus(id: string, status: string): Promise<VendorCounterpartyMapping>;
+  getVendorCounterpartyMappingByCounterpartyAndCrn(counterpartyId: string, crn: string): Promise<VendorCounterpartyMapping | undefined>;
 
-  getOffers(): Promise<Offer[]>;
-  getOffersByRestaurant(restaurantId: string): Promise<Offer[]>;
-  getOffersByVendor(vendorId: string): Promise<Offer[]>;
-  getOffer(id: string): Promise<Offer | undefined>;
-  createOffer(offer: InsertOffer): Promise<Offer>;
-  updateOfferStatus(id: string, status: string, acceptedAt?: Date): Promise<void>;
+  // VendorPricingSchedules + Tiers
+  getVendorPricingSchedulesByVendorMaster(vendorMasterId: string): Promise<VendorPricingSchedule[]>;
+  createVendorPricingSchedule(s: InsertVendorPricingSchedule): Promise<VendorPricingSchedule>;
+  getVendorPricingTiersBySchedule(scheduleId: string): Promise<VendorPricingTier[]>;
+  createVendorPricingTier(t: InsertVendorPricingTier): Promise<VendorPricingTier>;
+  deleteVendorPricingTier(id: string): Promise<void>;
 
-  getOfferAssignments(offerId: string): Promise<OfferAssignment[]>;
-  createOfferAssignment(a: InsertOfferAssignment): Promise<OfferAssignment>;
+  // DeliveryRecords
+  getDeliveryRecordsByVendorMaster(vendorMasterId: string): Promise<DeliveryRecord[]>;
+  getDeliveryRecordsByCounterparty(counterpartyId: string): Promise<DeliveryRecord[]>;
+  getOutstandingDeliveryRecordsByVendorMaster(vendorMasterId: string): Promise<DeliveryRecord[]>;
+  getDeliveryRecordsByIds(ids: string[]): Promise<DeliveryRecord[]>;
+  createDeliveryRecord(dr: InsertDeliveryRecord): Promise<DeliveryRecord>;
+  updateDeliveryRecordStatusBatch(ids: string[], status: string): Promise<void>;
 
+  // Cashouts
+  getCashouts(): Promise<Cashout[]>;
+  getCashout(id: string): Promise<Cashout | undefined>;
+  getCashoutsByVendorMaster(vendorMasterId: string): Promise<Cashout[]>;
+  getCashoutsByCounterparty(counterpartyId: string): Promise<Cashout[]>;
+  createCashout(c: InsertCashout): Promise<Cashout>;
+  updateCashoutStatus(id: string, status: string, extra?: Partial<Cashout>): Promise<Cashout>;
+
+  // CashoutAllocations
+  getCashoutAllocationsByCashout(cashoutId: string): Promise<CashoutAllocation[]>;
+  createCashoutAllocation(a: InsertCashoutAllocation): Promise<CashoutAllocation>;
+
+  // CashoutDeliveries
+  getCashoutDeliveriesByCashout(cashoutId: string): Promise<CashoutDelivery[]>;
+  createCashoutDelivery(cd: InsertCashoutDelivery): Promise<CashoutDelivery>;
+
+  // LedgerEntries
   getLedgerEntries(): Promise<LedgerEntry[]>;
+  getLedgerEntriesByCashout(cashoutId: string): Promise<LedgerEntry[]>;
   createLedgerEntry(entry: InsertLedgerEntry): Promise<LedgerEntry>;
-  getLedgerEntriesByOffer(offerId: string): Promise<LedgerEntry[]>;
 
-  getDashboardStats(restaurantId?: string): Promise<{
-    totalOwed: number;
-    eligibleOwed: number;
-    financedOutstanding: number;
-    overdue: number;
+  // NotificationAttempts
+  getNotificationAttemptsByCashout(cashoutId: string): Promise<NotificationAttempt[]>;
+  createNotificationAttempt(na: InsertNotificationAttempt): Promise<NotificationAttempt>;
+  updateNotificationAttempt(id: string, na: Partial<InsertNotificationAttempt>): Promise<NotificationAttempt>;
+
+  // Dashboard
+  getDashboardStats(opts?: { counterpartyId?: string; vendorMasterId?: string }): Promise<{
+    totalOutstandingDeliveries: number;
+    totalOutstandingAmount: number;
+    totalCashoutsRequested: number;
+    totalCashoutsPaidOut: number;
   }>;
 
-  getFeeRates(): Promise<FeeRate[]>;
-  getFeeRate(id: string): Promise<FeeRate | undefined>;
-  createFeeRate(rate: InsertFeeRate): Promise<FeeRate>;
-  updateFeeRate(id: string, rate: Partial<InsertFeeRate>): Promise<FeeRate>;
-  deleteFeeRate(id: string): Promise<void>;
-  getFeeRateForDays(days: number): Promise<FeeRate | undefined>;
+  // Outstanding deliveries grouped by counterparty+vendorMaster
+  getOutstandingDeliveriesByCounterpartyAndVendorMaster(
+    counterpartyId: string,
+    vendorMasterId: string
+  ): Promise<DeliveryRecord[]>;
+
+  // Active pricing tier for vendor master given delivery count
+  getActivePricingTier(vendorMasterId: string, deliveryCount: number): Promise<VendorPricingTier | undefined>;
 }
 
 export class DatabaseStorage implements IStorage {
+  // Users
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user;
@@ -92,189 +141,367 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
-  async getRestaurants(): Promise<Restaurant[]> {
-    return db.select().from(restaurants);
+  // VendorMasters
+  async getVendorMasters(): Promise<VendorMaster[]> {
+    return db.select().from(vendorMasters).orderBy(desc(vendorMasters.createdAt));
   }
 
-  async getRestaurant(id: string): Promise<Restaurant | undefined> {
-    const [r] = await db.select().from(restaurants).where(eq(restaurants.id, id));
-    return r;
+  async getVendorMaster(id: string): Promise<VendorMaster | undefined> {
+    const [vm] = await db.select().from(vendorMasters).where(eq(vendorMasters.id, id));
+    return vm;
   }
 
-  async createRestaurant(r: InsertRestaurant): Promise<Restaurant> {
-    const [rest] = await db.insert(restaurants).values(r).returning();
-    return rest;
+  async getVendorMasterByCrn(crn: string): Promise<VendorMaster | undefined> {
+    const [vm] = await db.select().from(vendorMasters).where(eq(vendorMasters.crn, crn));
+    return vm;
   }
 
-  async getVendors(restaurantId: string): Promise<Vendor[]> {
-    return db.select().from(vendors).where(eq(vendors.restaurantId, restaurantId));
+  async createVendorMaster(vm: InsertVendorMaster): Promise<VendorMaster> {
+    const [created] = await db.insert(vendorMasters).values(vm).returning();
+    return created;
   }
 
-  async getAllVendors(): Promise<Vendor[]> {
-    return db.select().from(vendors);
+  async updateVendorMaster(id: string, vm: Partial<InsertVendorMaster>): Promise<VendorMaster> {
+    const [updated] = await db.update(vendorMasters).set(vm).where(eq(vendorMasters.id, id)).returning();
+    return updated;
   }
 
-  async getVendor(id: string): Promise<Vendor | undefined> {
-    const [v] = await db.select().from(vendors).where(eq(vendors.id, id));
-    return v;
+  // Counterparties
+  async getCounterparties(): Promise<Counterparty[]> {
+    return db.select().from(counterparties).orderBy(desc(counterparties.createdAt));
   }
 
-  async createVendor(v: InsertVendor): Promise<Vendor> {
-    const [vendor] = await db.insert(vendors).values(v).returning();
-    return vendor;
+  async getCounterparty(id: string): Promise<Counterparty | undefined> {
+    const [cp] = await db.select().from(counterparties).where(eq(counterparties.id, id));
+    return cp;
   }
 
-  async getOrCreateVendor(restaurantId: string, name: string): Promise<Vendor> {
-    const existing = await db
-      .select()
-      .from(vendors)
-      .where(and(eq(vendors.restaurantId, restaurantId), eq(vendors.name, name)));
-    if (existing.length > 0) return existing[0];
-    const [v] = await db
-      .insert(vendors)
-      .values({ restaurantId, name })
+  async createCounterparty(cp: InsertCounterparty): Promise<Counterparty> {
+    const [created] = await db.insert(counterparties).values(cp).returning();
+    return created;
+  }
+
+  async updateCounterparty(id: string, cp: Partial<InsertCounterparty>): Promise<Counterparty> {
+    const [updated] = await db.update(counterparties).set(cp).where(eq(counterparties.id, id)).returning();
+    return updated;
+  }
+
+  // VendorCounterpartyMappings
+  async getVendorCounterpartyMappingsByCounterparty(counterpartyId: string): Promise<VendorCounterpartyMapping[]> {
+    return db.select().from(vendorCounterpartyMappings).where(eq(vendorCounterpartyMappings.counterpartyId, counterpartyId));
+  }
+
+  async getVendorCounterpartyMappingsByVendorMaster(vendorMasterId: string): Promise<VendorCounterpartyMapping[]> {
+    return db.select().from(vendorCounterpartyMappings).where(eq(vendorCounterpartyMappings.vendorMasterId, vendorMasterId));
+  }
+
+  async createVendorCounterpartyMapping(m: InsertVendorCounterpartyMapping): Promise<VendorCounterpartyMapping> {
+    const [created] = await db.insert(vendorCounterpartyMappings).values(m).returning();
+    return created;
+  }
+
+  async updateVendorCounterpartyMappingStatus(id: string, status: string): Promise<VendorCounterpartyMapping> {
+    const [updated] = await db
+      .update(vendorCounterpartyMappings)
+      .set({ status })
+      .where(eq(vendorCounterpartyMappings.id, id))
       .returning();
-    return v;
+    return updated;
   }
 
-  async getInvoices(vendorId: string): Promise<Invoice[]> {
-    return db.select().from(invoices).where(eq(invoices.vendorId, vendorId));
+  async getVendorCounterpartyMappingByCounterpartyAndCrn(
+    counterpartyId: string,
+    crn: string
+  ): Promise<VendorCounterpartyMapping | undefined> {
+    const [mapping] = await db
+      .select()
+      .from(vendorCounterpartyMappings)
+      .where(
+        and(
+          eq(vendorCounterpartyMappings.counterpartyId, counterpartyId),
+          eq(vendorCounterpartyMappings.crn, crn)
+        )
+      );
+    return mapping;
   }
 
-  async getInvoice(id: string): Promise<Invoice | undefined> {
-    const [inv] = await db.select().from(invoices).where(eq(invoices.id, id));
-    return inv;
+  // VendorPricingSchedules
+  async getVendorPricingSchedulesByVendorMaster(vendorMasterId: string): Promise<VendorPricingSchedule[]> {
+    return db.select().from(vendorPricingSchedules).where(eq(vendorPricingSchedules.vendorMasterId, vendorMasterId));
   }
 
-  async createInvoice(inv: InsertInvoice): Promise<Invoice> {
-    const [invoice] = await db.insert(invoices).values(inv).returning();
-    return invoice;
+  async createVendorPricingSchedule(s: InsertVendorPricingSchedule): Promise<VendorPricingSchedule> {
+    const [created] = await db.insert(vendorPricingSchedules).values(s).returning();
+    return created;
   }
 
-  async getInvoicesByIds(ids: string[]): Promise<Invoice[]> {
+  // VendorPricingTiers
+  async getVendorPricingTiersBySchedule(scheduleId: string): Promise<VendorPricingTier[]> {
+    return db.select().from(vendorPricingTiers).where(eq(vendorPricingTiers.scheduleId, scheduleId));
+  }
+
+  async createVendorPricingTier(t: InsertVendorPricingTier): Promise<VendorPricingTier> {
+    const [created] = await db.insert(vendorPricingTiers).values(t).returning();
+    return created;
+  }
+
+  async deleteVendorPricingTier(id: string): Promise<void> {
+    await db.delete(vendorPricingTiers).where(eq(vendorPricingTiers.id, id));
+  }
+
+  // DeliveryRecords
+  async getDeliveryRecordsByVendorMaster(vendorMasterId: string): Promise<DeliveryRecord[]> {
+    return db.select().from(deliveryRecords).where(eq(deliveryRecords.vendorMasterId, vendorMasterId)).orderBy(desc(deliveryRecords.createdAt));
+  }
+
+  async getDeliveryRecordsByCounterparty(counterpartyId: string): Promise<DeliveryRecord[]> {
+    return db.select().from(deliveryRecords).where(eq(deliveryRecords.counterpartyId, counterpartyId)).orderBy(desc(deliveryRecords.createdAt));
+  }
+
+  async getOutstandingDeliveryRecordsByVendorMaster(vendorMasterId: string): Promise<DeliveryRecord[]> {
+    return db
+      .select()
+      .from(deliveryRecords)
+      .where(
+        and(
+          eq(deliveryRecords.vendorMasterId, vendorMasterId),
+          eq(deliveryRecords.status, "OUTSTANDING")
+        )
+      )
+      .orderBy(desc(deliveryRecords.createdAt));
+  }
+
+  async getDeliveryRecordsByIds(ids: string[]): Promise<DeliveryRecord[]> {
     if (ids.length === 0) return [];
-    return db.select().from(invoices).where(inArray(invoices.id, ids));
+    return db.select().from(deliveryRecords).where(inArray(deliveryRecords.id, ids));
   }
 
-  async getOffers(): Promise<Offer[]> {
-    return db.select().from(offers).orderBy(desc(offers.createdAt));
+  async createDeliveryRecord(dr: InsertDeliveryRecord): Promise<DeliveryRecord> {
+    const [created] = await db.insert(deliveryRecords).values(dr).returning();
+    return created;
   }
 
-  async getOffersByRestaurant(restaurantId: string): Promise<Offer[]> {
-    return db.select().from(offers).where(eq(offers.restaurantId, restaurantId)).orderBy(desc(offers.createdAt));
+  async updateDeliveryRecordStatusBatch(ids: string[], status: string): Promise<void> {
+    if (ids.length === 0) return;
+    await db.update(deliveryRecords).set({ status }).where(inArray(deliveryRecords.id, ids));
   }
 
-  async getOffersByVendor(vendorId: string): Promise<Offer[]> {
-    return db.select().from(offers).where(eq(offers.vendorId, vendorId)).orderBy(desc(offers.createdAt));
+  // Cashouts
+  async getCashouts(): Promise<Cashout[]> {
+    return db.select().from(cashouts).orderBy(desc(cashouts.createdAt));
   }
 
-  async getOffer(id: string): Promise<Offer | undefined> {
-    const [o] = await db.select().from(offers).where(eq(offers.id, id));
-    return o;
+  async getCashout(id: string): Promise<Cashout | undefined> {
+    const [c] = await db.select().from(cashouts).where(eq(cashouts.id, id));
+    return c;
   }
 
-  async createOffer(offer: InsertOffer): Promise<Offer> {
-    const [o] = await db.insert(offers).values(offer).returning();
-    return o;
+  async getCashoutsByVendorMaster(vendorMasterId: string): Promise<Cashout[]> {
+    return db.select().from(cashouts).where(eq(cashouts.vendorMasterId, vendorMasterId)).orderBy(desc(cashouts.createdAt));
   }
 
-  async updateOfferStatus(id: string, status: string, acceptedAt?: Date): Promise<void> {
-    const updates: any = { status };
-    if (acceptedAt) updates.acceptedAt = acceptedAt;
-    await db.update(offers).set(updates).where(eq(offers.id, id));
+  async getCashoutsByCounterparty(counterpartyId: string): Promise<Cashout[]> {
+    const allocations = await db
+      .select({ cashoutId: cashoutAllocations.cashoutId })
+      .from(cashoutAllocations)
+      .where(eq(cashoutAllocations.counterpartyId, counterpartyId));
+    const cashoutIds = allocations.map((a) => a.cashoutId);
+    if (cashoutIds.length === 0) return [];
+    return db.select().from(cashouts).where(inArray(cashouts.id, cashoutIds)).orderBy(desc(cashouts.createdAt));
   }
 
-  async getOfferAssignments(offerId: string): Promise<OfferAssignment[]> {
-    return db.select().from(offerAssignments).where(eq(offerAssignments.offerId, offerId));
+  async createCashout(c: InsertCashout): Promise<Cashout> {
+    const [created] = await db.insert(cashouts).values(c).returning();
+    return created;
   }
 
-  async createOfferAssignment(a: InsertOfferAssignment): Promise<OfferAssignment> {
-    const [oa] = await db.insert(offerAssignments).values(a).returning();
-    return oa;
+  async updateCashoutStatus(id: string, status: string, extra?: Partial<Cashout>): Promise<Cashout> {
+    const updates: any = { status, ...extra };
+    if (status === "COUNTERPARTY_APPROVED" || status === "ADMIN_APPROVED") {
+      updates.acceptedAt = new Date();
+    }
+    if (status === "PAID_OUT") {
+      updates.paidOutAt = new Date();
+    }
+    const [updated] = await db.update(cashouts).set(updates).where(eq(cashouts.id, id)).returning();
+    return updated;
   }
 
+  // CashoutAllocations
+  async getCashoutAllocationsByCashout(cashoutId: string): Promise<CashoutAllocation[]> {
+    return db.select().from(cashoutAllocations).where(eq(cashoutAllocations.cashoutId, cashoutId));
+  }
+
+  async createCashoutAllocation(a: InsertCashoutAllocation): Promise<CashoutAllocation> {
+    const [created] = await db.insert(cashoutAllocations).values(a).returning();
+    return created;
+  }
+
+  // CashoutDeliveries
+  async getCashoutDeliveriesByCashout(cashoutId: string): Promise<CashoutDelivery[]> {
+    return db.select().from(cashoutDeliveries).where(eq(cashoutDeliveries.cashoutId, cashoutId));
+  }
+
+  async createCashoutDelivery(cd: InsertCashoutDelivery): Promise<CashoutDelivery> {
+    const [created] = await db.insert(cashoutDeliveries).values(cd).returning();
+    return created;
+  }
+
+  // LedgerEntries
   async getLedgerEntries(): Promise<LedgerEntry[]> {
     return db.select().from(ledgerEntries).orderBy(desc(ledgerEntries.createdAt));
   }
 
+  async getLedgerEntriesByCashout(cashoutId: string): Promise<LedgerEntry[]> {
+    return db.select().from(ledgerEntries).where(eq(ledgerEntries.cashoutId, cashoutId));
+  }
+
   async createLedgerEntry(entry: InsertLedgerEntry): Promise<LedgerEntry> {
-    const [le] = await db.insert(ledgerEntries).values(entry).returning();
-    return le;
-  }
-
-  async getLedgerEntriesByOffer(offerId: string): Promise<LedgerEntry[]> {
-    return db
-      .select()
-      .from(ledgerEntries)
-      .where(eq(ledgerEntries.offerId, offerId));
-  }
-
-  async getDashboardStats(restaurantId?: string) {
-    const allInvoices = restaurantId
-      ? await db.select().from(invoices).where(eq(invoices.restaurantId, restaurantId))
-      : await db.select().from(invoices);
-    const allOffers = restaurantId
-      ? await db.select().from(offers).where(eq(offers.restaurantId, restaurantId))
-      : await db.select().from(offers);
-    const allLedger = await db.select().from(ledgerEntries);
-
-    const totalOwed = allInvoices.reduce(
-      (sum, inv) => sum + Number(inv.amountRemaining),
-      0
-    );
-    const eligibleOwed = allInvoices
-      .filter((inv) => inv.isEligible)
-      .reduce((sum, inv) => sum + Number(inv.amountRemaining), 0);
-
-    const acceptedOffers = allOffers.filter((o) => ["admin_approved", "payout_sent", "repaid", "closed"].includes(o.status));
-    const repayments = allLedger.filter((e) => e.type === "repayment");
-
-    let financedOutstanding = 0;
-    let overdue = 0;
-
-    for (const offer of acceptedOffers) {
-      const totalRepayment = Number(offer.totalRepayment);
-      const paid = repayments
-        .filter((r) => r.offerId === offer.id)
-        .reduce((sum, r) => sum + Number(r.amount), 0);
-      const remaining = totalRepayment - paid;
-      if (remaining > 0) {
-        financedOutstanding += remaining;
-        if (offer.repaymentDate && new Date(offer.repaymentDate) < new Date()) {
-          overdue += remaining;
-        }
-      }
-    }
-
-    return { totalOwed, eligibleOwed, financedOutstanding, overdue };
-  }
-
-  async getFeeRates(): Promise<FeeRate[]> {
-    return db.select().from(feeRates).orderBy(feeRates.minDays);
-  }
-
-  async getFeeRate(id: string): Promise<FeeRate | undefined> {
-    const [rate] = await db.select().from(feeRates).where(eq(feeRates.id, id));
-    return rate;
-  }
-
-  async createFeeRate(rate: InsertFeeRate): Promise<FeeRate> {
-    const [created] = await db.insert(feeRates).values(rate).returning();
+    const [created] = await db.insert(ledgerEntries).values(entry).returning();
     return created;
   }
 
-  async updateFeeRate(id: string, rate: Partial<InsertFeeRate>): Promise<FeeRate> {
-    const [updated] = await db.update(feeRates).set(rate).where(eq(feeRates.id, id)).returning();
+  // NotificationAttempts
+  async getNotificationAttemptsByCashout(cashoutId: string): Promise<NotificationAttempt[]> {
+    return db.select().from(notificationAttempts).where(eq(notificationAttempts.cashoutId, cashoutId));
+  }
+
+  async createNotificationAttempt(na: InsertNotificationAttempt): Promise<NotificationAttempt> {
+    const [created] = await db.insert(notificationAttempts).values(na).returning();
+    return created;
+  }
+
+  async updateNotificationAttempt(id: string, na: Partial<InsertNotificationAttempt>): Promise<NotificationAttempt> {
+    const [updated] = await db.update(notificationAttempts).set(na).where(eq(notificationAttempts.id, id)).returning();
     return updated;
   }
 
-  async deleteFeeRate(id: string): Promise<void> {
-    await db.delete(feeRates).where(eq(feeRates.id, id));
+  // Dashboard stats
+  async getDashboardStats(opts?: { counterpartyId?: string; vendorMasterId?: string }): Promise<{
+    totalOutstandingDeliveries: number;
+    totalOutstandingAmount: number;
+    totalCashoutsRequested: number;
+    totalCashoutsPaidOut: number;
+  }> {
+    let deliveryQuery = db.select().from(deliveryRecords).where(eq(deliveryRecords.status, "OUTSTANDING"));
+    let allDeliveries: DeliveryRecord[];
+
+    if (opts?.counterpartyId && opts?.vendorMasterId) {
+      allDeliveries = await db
+        .select()
+        .from(deliveryRecords)
+        .where(
+          and(
+            eq(deliveryRecords.status, "OUTSTANDING"),
+            eq(deliveryRecords.counterpartyId, opts.counterpartyId),
+            eq(deliveryRecords.vendorMasterId, opts.vendorMasterId)
+          )
+        );
+    } else if (opts?.counterpartyId) {
+      allDeliveries = await db
+        .select()
+        .from(deliveryRecords)
+        .where(
+          and(
+            eq(deliveryRecords.status, "OUTSTANDING"),
+            eq(deliveryRecords.counterpartyId, opts.counterpartyId)
+          )
+        );
+    } else if (opts?.vendorMasterId) {
+      allDeliveries = await db
+        .select()
+        .from(deliveryRecords)
+        .where(
+          and(
+            eq(deliveryRecords.status, "OUTSTANDING"),
+            eq(deliveryRecords.vendorMasterId, opts.vendorMasterId)
+          )
+        );
+    } else {
+      allDeliveries = await db
+        .select()
+        .from(deliveryRecords)
+        .where(eq(deliveryRecords.status, "OUTSTANDING"));
+    }
+
+    const totalOutstandingDeliveries = allDeliveries.length;
+    const totalOutstandingAmount = allDeliveries.reduce(
+      (sum, d) => sum + Number(d.amountEarned || 0),
+      0
+    );
+
+    let cashoutList: Cashout[];
+    if (opts?.vendorMasterId) {
+      cashoutList = await db.select().from(cashouts).where(eq(cashouts.vendorMasterId, opts.vendorMasterId));
+    } else if (opts?.counterpartyId) {
+      const allocations = await db
+        .select({ cashoutId: cashoutAllocations.cashoutId })
+        .from(cashoutAllocations)
+        .where(eq(cashoutAllocations.counterpartyId, opts.counterpartyId));
+      const cashoutIds = allocations.map((a) => a.cashoutId);
+      cashoutList = cashoutIds.length > 0
+        ? await db.select().from(cashouts).where(inArray(cashouts.id, cashoutIds))
+        : [];
+    } else {
+      cashoutList = await db.select().from(cashouts);
+    }
+
+    const totalCashoutsRequested = cashoutList
+      .filter((c) => c.status === "REQUESTED")
+      .reduce((sum, c) => sum + Number(c.cashoutAmount), 0);
+
+    const totalCashoutsPaidOut = cashoutList
+      .filter((c) => c.status === "PAID_OUT" || c.status === "SETTLED")
+      .reduce((sum, c) => sum + Number(c.cashoutAmount), 0);
+
+    return {
+      totalOutstandingDeliveries,
+      totalOutstandingAmount,
+      totalCashoutsRequested,
+      totalCashoutsPaidOut,
+    };
   }
 
-  async getFeeRateForDays(days: number): Promise<FeeRate | undefined> {
-    const allRates = await this.getFeeRates();
-    return allRates.find(r => days >= r.minDays && days <= r.maxDays);
+  // Outstanding deliveries by counterparty + vendorMaster
+  async getOutstandingDeliveriesByCounterpartyAndVendorMaster(
+    counterpartyId: string,
+    vendorMasterId: string
+  ): Promise<DeliveryRecord[]> {
+    return db
+      .select()
+      .from(deliveryRecords)
+      .where(
+        and(
+          eq(deliveryRecords.counterpartyId, counterpartyId),
+          eq(deliveryRecords.vendorMasterId, vendorMasterId),
+          eq(deliveryRecords.status, "OUTSTANDING")
+        )
+      )
+      .orderBy(desc(deliveryRecords.deliveryDate));
+  }
+
+  // Active pricing tier for a vendor master given delivery count
+  async getActivePricingTier(vendorMasterId: string, deliveryCount: number): Promise<VendorPricingTier | undefined> {
+    const schedules = await db
+      .select()
+      .from(vendorPricingSchedules)
+      .where(eq(vendorPricingSchedules.vendorMasterId, vendorMasterId))
+      .orderBy(desc(vendorPricingSchedules.effectiveFrom));
+
+    if (schedules.length === 0) return undefined;
+
+    const latestSchedule = schedules[0];
+    const tiers = await db
+      .select()
+      .from(vendorPricingTiers)
+      .where(eq(vendorPricingTiers.scheduleId, latestSchedule.id));
+
+    return tiers.find((t) => {
+      const from = t.fromDeliveries;
+      const to = t.toDeliveries;
+      if (to === null) return deliveryCount >= from;
+      return deliveryCount >= from && deliveryCount <= to;
+    });
   }
 }
 
