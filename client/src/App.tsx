@@ -12,46 +12,42 @@ import NotFound from "@/pages/not-found";
 import LoginPage from "@/pages/login";
 import DashboardPage from "@/pages/dashboard";
 import VendorDashboardPage from "@/pages/vendor-dashboard";
-import UploadPage from "@/pages/upload";
-import VendorListPage from "@/pages/vendor-list";
-import VendorInvoicesPage from "@/pages/vendor-invoices";
-import VendorMyInvoicesPage from "@/pages/vendor-my-invoices";
-import OfferReviewPage from "@/pages/offer-review";
-import OffersListPage from "@/pages/offers-list";
+import DeliveryRecordsPage from "@/pages/delivery-records";
+import CashoutsListPage from "@/pages/cashouts-list";
+import CashoutDetailPage from "@/pages/cashout-detail";
+import RequestCashoutPage from "@/pages/request-cashout";
+import AdminCounterpartiesPage from "@/pages/admin-counterparties";
+import AdminVendorMastersPage from "@/pages/admin-vendor-masters";
+import AdminMappingsPage from "@/pages/admin-mappings";
 import AdminLedgerPage from "@/pages/admin-ledger";
-import FeeRatesPage from "@/pages/fee-rates";
-import FinancingPage from "@/pages/financing";
-import AdminRestaurantsPage from "@/pages/admin-restaurants";
-import AdminVendorsPage from "@/pages/admin-vendors";
-import VendorRequestCashoutPage from "@/pages/vendor-request-cashout";
+import SettlementsPage from "@/pages/settlements";
 import { Skeleton } from "@/components/ui/skeleton";
 
 function AdminRouter() {
   return (
     <Switch>
       <Route path="/" component={DashboardPage} />
-      <Route path="/admin/restaurants" component={AdminRestaurantsPage} />
-      <Route path="/admin/vendors" component={AdminVendorsPage} />
-      <Route path="/restaurants/:id/upload" component={UploadPage} />
-      <Route path="/restaurants/:id/vendors" component={VendorListPage} />
-      <Route path="/restaurants/:id/vendors/:vendorId" component={VendorInvoicesPage} />
-      <Route path="/offers" component={OffersListPage} />
-      <Route path="/offers/:id" component={OfferReviewPage} />
-      <Route path="/admin/fee-rates" component={FeeRatesPage} />
+      <Route path="/admin/counterparties" component={AdminCounterpartiesPage} />
+      <Route path="/admin/vendor-masters" component={AdminVendorMastersPage} />
+      <Route path="/admin/vendor-masters/:id/pricing" component={AdminVendorMastersPage} />
+      <Route path="/admin/mappings" component={AdminMappingsPage} />
+      <Route path="/delivery-records" component={DeliveryRecordsPage} />
+      <Route path="/cashouts" component={CashoutsListPage} />
+      <Route path="/cashouts/:id" component={CashoutDetailPage} />
       <Route path="/admin/ledger" component={AdminLedgerPage} />
       <Route component={NotFound} />
     </Switch>
   );
 }
 
-function RestaurantRouter() {
+function CounterpartyRouter() {
   return (
     <Switch>
       <Route path="/" component={DashboardPage} />
-      <Route path="/restaurants/:id/upload" component={UploadPage} />
-      <Route path="/restaurants/:id/vendors" component={VendorListPage} />
-      <Route path="/restaurants/:id/vendors/:vendorId" component={VendorInvoicesPage} />
-      <Route path="/financing" component={FinancingPage} />
+      <Route path="/delivery-records" component={DeliveryRecordsPage} />
+      <Route path="/cashouts" component={CashoutsListPage} />
+      <Route path="/cashouts/:id" component={CashoutDetailPage} />
+      <Route path="/settlements" component={SettlementsPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -61,10 +57,10 @@ function VendorRouter() {
   return (
     <Switch>
       <Route path="/" component={VendorDashboardPage} />
-      <Route path="/vendor/invoices" component={VendorMyInvoicesPage} />
-      <Route path="/cashouts/new" component={VendorRequestCashoutPage} />
-      <Route path="/cashouts" component={OffersListPage} />
-      <Route path="/cashouts/:id" component={OfferReviewPage} />
+      <Route path="/my-deliveries" component={DeliveryRecordsPage} />
+      <Route path="/cashouts/new" component={RequestCashoutPage} />
+      <Route path="/cashouts" component={CashoutsListPage} />
+      <Route path="/cashouts/:id" component={CashoutDetailPage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -72,11 +68,11 @@ function VendorRouter() {
 
 function RoleRouter() {
   const { user } = useAuth();
-  const role = user?.role || "restaurant";
+  const role = user?.role || "counterparty";
 
   if (role === "admin") return <AdminRouter />;
   if (role === "vendor") return <VendorRouter />;
-  return <RestaurantRouter />;
+  return <CounterpartyRouter />;
 }
 
 function AuthenticatedApp() {

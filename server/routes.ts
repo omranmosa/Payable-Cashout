@@ -1,8 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { checkEligibility } from "./eligibility";
-import { generateAssignmentNoticePdf } from "./pdf";
 import bcrypt from "bcryptjs";
 import session from "express-session";
 import MemoryStore from "memorystore";
@@ -75,7 +73,7 @@ export async function registerRoutes(
     })
   );
 
-  // Auth routes
+  // ───── Auth ─────
   app.post("/api/auth/register", async (req: Request, res: Response) => {
     try {
       const { name, email, password } = req.body;
@@ -87,9 +85,9 @@ export async function registerRoutes(
         return res.status(400).json({ message: "Email already registered" });
       }
       const hashed = await bcrypt.hash(password, 10);
-      const user = await storage.createUser({ name, email, password: hashed, role: "restaurant" });
+      const user = await storage.createUser({ name, email, password: hashed, role: "counterparty" });
       req.session.userId = user.id;
-      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, restaurantId: user.restaurantId, vendorId: user.vendorId });
+      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, counterpartyId: user.counterpartyId, vendorMasterId: user.vendorMasterId });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
@@ -98,6 +96,9 @@ export async function registerRoutes(
   app.post("/api/auth/login", async (req: Request, res: Response) => {
     try {
       const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ message: "Email and password required" });
+      }
       const user = await storage.getUserByEmail(email);
       if (!user) {
         return res.status(401).json({ message: "Invalid credentials" });
@@ -107,156 +108,241 @@ export async function registerRoutes(
         return res.status(401).json({ message: "Invalid credentials" });
       }
       req.session.userId = user.id;
-      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, restaurantId: user.restaurantId, vendorId: user.vendorId });
+      return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, counterpartyId: user.counterpartyId, vendorMasterId: user.vendorMasterId });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
-  });
-
-  app.get("/api/auth/me", async (req: Request, res: Response) => {
-    if (!req.session.userId) {
-      return res.status(401).json({ message: "Not logged in" });
-    }
-    const user = await storage.getUser(req.session.userId);
-    if (!user) {
-      return res.status(401).json({ message: "User not found" });
-    }
-    return res.json({ id: user.id, name: user.name, email: user.email, role: user.role, restaurantId: user.restaurantId, vendorId: user.vendorId });
   });
 
   app.post("/api/auth/logout", (req: Request, res: Response) => {
-    req.session.destroy(() => {});
-    return res.json({ ok: true });
+    req.session.destroy(() => {
+      res.json({ ok: true });
+    });
   });
 
-  // Dashboard - admin and restaurant only
-  app.get("/api/dashboard", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
+  app.get("/api/auth/me", requireAuth, (req: Request, res: Response) => {
+    const u = req.currentUser!;
+    return res.json({ id: u.id, name: u.name, email: u.email, role: u.role, counterpartyId: u.counterpartyId, vendorMasterId: u.vendorMasterId });
+  });
+
+  // ───── Dashboard ─────
+  app.get("/api/dashboard", requireAuth, async (req: Request, res: Response) => {
     try {
       const user = req.currentUser!;
-      const stats = await storage.getDashboardStats(user.role === "restaurant" ? user.restaurantId || undefined : undefined);
-      const allOffers = user.role === "restaurant" && user.restaurantId
-        ? await storage.getOffersByRestaurant(user.restaurantId)
-        : await storage.getOffers();
-      const recentOffers = [];
-      for (const o of allOffers.slice(0, 5)) {
-        const vendor = await storage.getVendor(o.vendorId);
-        recentOffers.push({
-          id: o.id,
-          vendorName: vendor?.name || "Unknown",
-          advanceAmount: o.advanceAmount,
-          status: o.status,
-          createdAt: o.createdAt,
-        });
+      let opts: { counterpartyId?: string; vendorMasterId?: string } = {};
+      if (user.role === "counterparty" && user.counterpartyId) {
+        opts.counterpartyId = user.counterpartyId;
+      } else if (user.role === "vendor" && user.vendorMasterId) {
+        opts.vendorMasterId = user.vendorMasterId;
       }
-      return res.json({ ...stats, recentOffers });
+      const stats = await storage.getDashboardStats(opts);
+      return res.json(stats);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  // Vendor dashboard
-  app.get("/api/vendor/dashboard", requireAuth, requireRole("vendor"), async (req: Request, res: Response) => {
+  // ───── Counterparties (admin CRUD) ─────
+  app.get("/api/counterparties", requireAuth, async (req: Request, res: Response) => {
     try {
       const user = req.currentUser!;
-      if (!user.vendorId) {
-        return res.json({ totalAssigned: 0, eligibleCashout: 0, estimatedFee: 0, netCashout: 0, pendingCashouts: 0, paidOut: 0, invoiceCount: 0, recentCashouts: [] });
+      if (user.role === "counterparty" && user.counterpartyId) {
+        const cp = await storage.getCounterparty(user.counterpartyId);
+        return res.json(cp ? [cp] : []);
       }
-      const vendorOffers = await storage.getOffersByVendor(user.vendorId);
-      const invs = await storage.getInvoices(user.vendorId);
-      const rates = await storage.getFeeRates();
-
-      const totalAssigned = invs.reduce((s, i) => s + Number(i.amountRemaining), 0);
-      const eligibleInvs = invs.filter(i => i.isEligible);
-      const eligibleCashout = eligibleInvs.reduce((s, i) => s + Number(i.amountRemaining), 0);
-
-      let estimatedFee = 0;
-      for (const inv of eligibleInvs) {
-        const daysTodue = Math.max(0, Math.ceil((new Date(inv.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
-        const matchingRate = rates.find(r => daysTodue >= r.minDays && daysTodue <= r.maxDays);
-        const rate = matchingRate ? Number(matchingRate.ratePer30d) : 0.015;
-        const amt = Number(inv.amountRemaining);
-        estimatedFee += amt * rate * (daysTodue / 30);
+      if (user.role === "vendor") {
+        return res.json([]);
       }
-
-      const netCashout = eligibleCashout - estimatedFee;
-      const pendingCashouts = vendorOffers.filter(o => ["draft", "vendor_accepted"].includes(o.status)).length;
-      const paidOut = vendorOffers
-        .filter(o => ["payout_sent", "repaid", "closed"].includes(o.status))
-        .reduce((s, o) => s + Number(o.advanceAmount), 0);
-
-      const recentCashouts = [];
-      for (const o of vendorOffers.slice(0, 5)) {
-        const restaurant = await storage.getRestaurant(o.restaurantId);
-        recentCashouts.push({
-          id: o.id,
-          restaurantName: restaurant?.name || "Unknown",
-          advanceAmount: o.advanceAmount,
-          feeAmount: o.feeAmount,
-          netPayout: String((Number(o.advanceAmount) - Number(o.feeAmount)).toFixed(2)),
-          status: o.status,
-          createdAt: o.createdAt,
-        });
-      }
-
-      return res.json({
-        totalAssigned,
-        eligibleCashout,
-        estimatedFee: Number(estimatedFee.toFixed(2)),
-        netCashout: Number(netCashout.toFixed(2)),
-        pendingCashouts,
-        paidOut,
-        invoiceCount: invs.length,
-        recentCashouts,
-      });
+      const list = await storage.getCounterparties();
+      return res.json(list);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  // Restaurants
-  app.get("/api/restaurants", requireAuth, async (req: Request, res: Response) => {
+  app.get("/api/counterparties/:id", requireAuth, async (req: Request, res: Response) => {
     try {
+      const cp = await storage.getCounterparty(req.params.id);
+      if (!cp) return res.status(404).json({ message: "Counterparty not found" });
       const user = req.currentUser!;
-      if (user.role === "restaurant" && user.restaurantId) {
-        const r = await storage.getRestaurant(user.restaurantId);
-        return res.json(r ? [r] : []);
+      if (user.role === "counterparty" && user.counterpartyId !== cp.id) {
+        return res.status(403).json({ message: "Forbidden" });
       }
-      const rests = await storage.getRestaurants();
-      return res.json(rests);
+      return res.json(cp);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  app.post("/api/restaurants", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+  app.post("/api/counterparties", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
-      const { name, defaultRatePer30d, bankName, bankAccountNumber, bankRoutingNumber, bankAccountName } = req.body;
+      const { name, type, notificationEmails, webhookUrl, webhookSecret } = req.body;
       if (!name) return res.status(400).json({ message: "Name is required" });
-      const restaurant = await storage.createRestaurant({
+      const cp = await storage.createCounterparty({
         name,
-        defaultRatePer30d: defaultRatePer30d || "0.015",
+        type: type || "RESTAURANT",
+        notificationEmails: notificationEmails || null,
+        webhookUrl: webhookUrl || null,
+        webhookSecret: webhookSecret || null,
+      });
+      return res.json(cp);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/counterparties/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const updates: any = {};
+      const { name, type, notificationEmails, webhookUrl, webhookSecret } = req.body;
+      if (name !== undefined) updates.name = name;
+      if (type !== undefined) updates.type = type;
+      if (notificationEmails !== undefined) updates.notificationEmails = notificationEmails;
+      if (webhookUrl !== undefined) updates.webhookUrl = webhookUrl;
+      if (webhookSecret !== undefined) updates.webhookSecret = webhookSecret;
+      const cp = await storage.updateCounterparty(req.params.id, updates);
+      return res.json(cp);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Vendor Masters (admin CRUD) ─────
+  app.get("/api/vendor-masters", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      if (user.role === "vendor" && user.vendorMasterId) {
+        const vm = await storage.getVendorMaster(user.vendorMasterId);
+        return res.json(vm ? [vm] : []);
+      }
+      const list = await storage.getVendorMasters();
+      return res.json(list);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/vendor-masters/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const vm = await storage.getVendorMaster(req.params.id);
+      if (!vm) return res.status(404).json({ message: "Vendor master not found" });
+      return res.json(vm);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/vendor-masters", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { legalName, crn, iban, beneficiary, bankName } = req.body;
+      if (!legalName || !crn) return res.status(400).json({ message: "Legal name and CRN are required" });
+      const existing = await storage.getVendorMasterByCrn(crn);
+      if (existing) return res.status(400).json({ message: "CRN already exists" });
+      const vm = await storage.createVendorMaster({
+        legalName,
+        crn,
+        iban: iban || null,
+        beneficiary: beneficiary || null,
         bankName: bankName || null,
-        bankAccountNumber: bankAccountNumber || null,
-        bankRoutingNumber: bankRoutingNumber || null,
-        bankAccountName: bankAccountName || null,
       });
-      return res.json(restaurant);
+      return res.json(vm);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  // Vendors
-  app.get("/api/vendors", requireAuth, requireRole("admin"), async (_req: Request, res: Response) => {
+  app.put("/api/vendor-masters/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
-      const allVendors = await storage.getAllVendors();
+      const updates: any = {};
+      const { legalName, crn, iban, beneficiary, bankName } = req.body;
+      if (legalName !== undefined) updates.legalName = legalName;
+      if (crn !== undefined) updates.crn = crn;
+      if (iban !== undefined) updates.iban = iban;
+      if (beneficiary !== undefined) updates.beneficiary = beneficiary;
+      if (bankName !== undefined) updates.bankName = bankName;
+      const vm = await storage.updateVendorMaster(req.params.id, updates);
+      return res.json(vm);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Vendor-Counterparty Mappings ─────
+  app.get("/api/vendor-counterparty-mappings", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      const { counterpartyId, vendorMasterId } = req.query;
+      if (user.role === "counterparty" && user.counterpartyId) {
+        const mappings = await storage.getVendorCounterpartyMappingsByCounterparty(user.counterpartyId);
+        return res.json(mappings);
+      }
+      if (user.role === "vendor" && user.vendorMasterId) {
+        const mappings = await storage.getVendorCounterpartyMappingsByVendorMaster(user.vendorMasterId);
+        return res.json(mappings);
+      }
+      if (counterpartyId) {
+        const mappings = await storage.getVendorCounterpartyMappingsByCounterparty(counterpartyId as string);
+        return res.json(mappings);
+      }
+      if (vendorMasterId) {
+        const mappings = await storage.getVendorCounterpartyMappingsByVendorMaster(vendorMasterId as string);
+        return res.json(mappings);
+      }
+      const all: any[] = [];
+      const cps = await storage.getCounterparties();
+      for (const cp of cps) {
+        const ms = await storage.getVendorCounterpartyMappingsByCounterparty(cp.id);
+        all.push(...ms);
+      }
+      return res.json(all);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/vendor-counterparty-mappings", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { counterpartyId, counterpartyVendorRef, crn, vendorMasterId } = req.body;
+      if (!counterpartyId || !crn) {
+        return res.status(400).json({ message: "counterpartyId and crn are required" });
+      }
+      let resolvedVmId = vendorMasterId || null;
+      if (!resolvedVmId && crn) {
+        const vm = await storage.getVendorMasterByCrn(crn);
+        if (vm) resolvedVmId = vm.id;
+      }
+      const mapping = await storage.createVendorCounterpartyMapping({
+        counterpartyId,
+        counterpartyVendorRef: counterpartyVendorRef || null,
+        vendorMasterId: resolvedVmId,
+        crn,
+        status: resolvedVmId ? "VERIFIED" : "UNVERIFIED",
+      });
+      return res.json(mapping);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.put("/api/vendor-counterparty-mappings/:id/status", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const { status } = req.body;
+      if (!status) return res.status(400).json({ message: "Status required" });
+      const mapping = await storage.updateVendorCounterpartyMappingStatus(req.params.id, status);
+      return res.json(mapping);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Vendor Pricing Schedules & Tiers (admin) ─────
+  app.get("/api/vendor-pricing/:vendorMasterId", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const schedules = await storage.getVendorPricingSchedulesByVendorMaster(req.params.vendorMasterId);
       const result = [];
-      for (const v of allVendors) {
-        const restaurant = await storage.getRestaurant(v.restaurantId);
-        result.push({
-          ...v,
-          restaurantName: restaurant?.name || "Unknown",
-        });
+      for (const s of schedules) {
+        const tiers = await storage.getVendorPricingTiersBySchedule(s.id);
+        result.push({ ...s, tiers });
       }
       return res.json(result);
     } catch (err: any) {
@@ -264,688 +350,524 @@ export async function registerRoutes(
     }
   });
 
-  app.post("/api/vendors", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+  app.post("/api/vendor-pricing", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
-      const { name, restaurantId } = req.body;
-      if (!name || !restaurantId) return res.status(400).json({ message: "Name and restaurant are required" });
-      const restaurant = await storage.getRestaurant(restaurantId);
-      if (!restaurant) return res.status(400).json({ message: "Restaurant not found" });
-      const vendor = await storage.createVendor({ name, restaurantId });
-      return res.json(vendor);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.get("/api/restaurants/:id/vendors", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
-    try {
-      const user = req.currentUser!;
-      let actualId = req.params.id as string;
-      if (actualId === "default") {
-        if (user.role === "restaurant" && user.restaurantId) {
-          actualId = user.restaurantId;
-        } else {
-          const rests = await storage.getRestaurants();
-          if (rests.length === 0) return res.json([]);
-          actualId = rests[0].id;
-        }
-      }
-      if (user.role === "restaurant" && user.restaurantId && actualId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      const vdrs = await storage.getVendors(actualId);
-      const result = [];
-      for (const v of vdrs) {
-        const invs = await storage.getInvoices(v.id);
-        result.push({
-          id: v.id,
-          name: v.name,
-          invoiceCount: invs.length,
-          eligibleCount: invs.filter((i) => i.isEligible).length,
-          totalAmount: invs.reduce((s, i) => s + Number(i.amountRemaining), 0),
-        });
-      }
-      return res.json(result);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.get("/api/vendors/:id", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const vendor = await storage.getVendor(req.params.id as string);
-      if (!vendor) return res.status(404).json({ message: "Vendor not found" });
-      const user = req.currentUser!;
-      if (user.role === "vendor" && user.vendorId !== vendor.id) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      if (user.role === "restaurant" && user.restaurantId && vendor.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      return res.json(vendor);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.get("/api/vendors/:id/invoices", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const user = req.currentUser!;
-      const vendor = await storage.getVendor(req.params.id as string);
-      if (!vendor) return res.status(404).json({ message: "Vendor not found" });
-      if (user.role === "vendor" && user.vendorId !== vendor.id) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      if (user.role === "restaurant" && user.restaurantId && vendor.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      const invs = await storage.getInvoices(req.params.id as string);
-      return res.json(invs);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  // CSV Upload - admin and restaurant only
-  app.post("/api/invoices/upload", requireAuth, requireRole("admin", "restaurant"), async (req: Request, res: Response) => {
-    try {
-      const user = req.currentUser!;
-      let { restaurantId, mapping, rows } = req.body;
-      if (!restaurantId || !mapping || !rows) {
-        return res.status(400).json({ message: "Missing data" });
-      }
-
-      if (restaurantId === "default" || !restaurantId) {
-        if (user.role === "restaurant" && user.restaurantId) {
-          restaurantId = user.restaurantId;
-        } else {
-          const rests = await storage.getRestaurants();
-          if (rests.length === 0) {
-            return res.status(400).json({ message: "No restaurant configured" });
-          }
-          restaurantId = rests[0].id;
-        }
-      }
-
-      if (user.role === "restaurant" && user.restaurantId && restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-
-      let count = 0;
-      for (const row of rows) {
-        const vendorName = row[mapping.vendor_name] || "Unknown Vendor";
-        const vendor = await storage.getOrCreateVendor(restaurantId, vendorName);
-
-        const invoiceNumber = row[mapping.invoice_number] || "";
-        const dueDate = row[mapping.due_date] || "";
-        const amountRemaining = row[mapping.amount_remaining] || "0";
-        const status = mapping.status ? row[mapping.status] || null : null;
-        const holdFlagRaw = mapping.hold_flag ? row[mapping.hold_flag] : null;
-        const holdFlag =
-          holdFlagRaw === true ||
-          holdFlagRaw === "true" ||
-          holdFlagRaw === "1" ||
-          holdFlagRaw === "yes";
-
-        const parsedAmount = parseFloat(
-          String(amountRemaining).replace(/[,$]/g, "")
-        );
-
-        let parsedDate = dueDate;
-        try {
-          const d = new Date(dueDate);
-          if (!isNaN(d.getTime())) {
-            parsedDate = d.toISOString().split("T")[0];
-          } else {
-            parsedDate = new Date().toISOString().split("T")[0];
-          }
-        } catch {
-          parsedDate = new Date().toISOString().split("T")[0];
-        }
-
-        const eligible = checkEligibility({
-          amountRemaining: parsedAmount,
-          dueDate: parsedDate,
-          status,
-          holdFlag,
-        });
-
-        await storage.createInvoice({
-          restaurantId,
-          vendorId: vendor.id,
-          invoiceNumber,
-          dueDate: parsedDate,
-          amountRemaining: String(parsedAmount),
-          status,
-          holdFlag,
-          rawData: row,
-          isEligible: eligible,
-        });
-
-        count++;
-      }
-
-      return res.json({ count });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  // Offers
-  app.get("/api/offers", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const user = req.currentUser!;
-      if (user.role === "restaurant") {
-        return res.status(403).json({ message: "Restaurant users do not have access to offers" });
-      }
-      let allOffers;
-      if (user.role === "vendor" && user.vendorId) {
-        allOffers = await storage.getOffersByVendor(user.vendorId);
-      } else {
-        allOffers = await storage.getOffers();
-      }
-      const result = [];
-      for (const o of allOffers) {
-        const vendor = await storage.getVendor(o.vendorId);
-        const restaurant = await storage.getRestaurant(o.restaurantId);
-        result.push({
-          id: o.id,
-          vendorName: vendor?.name || "Unknown",
-          restaurantName: restaurant?.name || "Unknown",
-          advanceAmount: o.advanceAmount,
-          feeAmount: o.feeAmount,
-          status: o.status,
-          createdAt: o.createdAt,
-        });
-      }
-      return res.json(result);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.get("/api/offers/:id", requireAuth, async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-
-      const user = req.currentUser!;
-      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      if (user.role === "vendor" && user.vendorId && offer.vendorId !== user.vendorId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-
-      const vendor = await storage.getVendor(offer.vendorId);
-      const restaurant = await storage.getRestaurant(offer.restaurantId);
-      const assignments = await storage.getOfferAssignments(offer.id);
-
-      const assignmentDetails = [];
-      for (const a of assignments) {
-        const inv = await storage.getInvoice(a.invoiceId);
-        assignmentDetails.push({
-          invoiceNumber: inv?.invoiceNumber || "",
-          assignedAmount: a.assignedAmount,
-          dueDate: inv?.dueDate || "",
-        });
-      }
-
-      return res.json({
-        ...offer,
-        restaurantName: restaurant?.name || "Unknown",
-        vendorName: vendor?.name || "Unknown",
-        assignments: assignmentDetails,
-        restaurant: {
-          bankName: restaurant?.bankName,
-          bankAccountNumber: restaurant?.bankAccountNumber,
-          bankRoutingNumber: restaurant?.bankRoutingNumber,
-          bankAccountName: restaurant?.bankAccountName,
-        },
-      });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers", requireAuth, requireRole("admin", "vendor"), async (req: Request, res: Response) => {
-    try {
-      const { restaurantId, vendorId, invoiceIds, advanceAmount } = req.body;
-      if (!restaurantId || !vendorId || !invoiceIds?.length || !advanceAmount) {
-        return res.status(400).json({ message: "Missing data" });
-      }
-
-      const user = req.currentUser!;
-      if (user.role === "vendor" && user.vendorId && vendorId !== user.vendorId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-
-      const vendor = await storage.getVendor(vendorId);
-      if (!vendor) return res.status(400).json({ message: "Vendor not found" });
-      if (vendor.restaurantId !== restaurantId) {
-        return res.status(400).json({ message: "Restaurant/vendor mismatch" });
-      }
-
-      const selectedInvoices = await storage.getInvoicesByIds(invoiceIds);
-      const allBelongToVendor = selectedInvoices.every(i => i.vendorId === vendorId);
-      if (!allBelongToVendor) {
-        return res.status(400).json({ message: "Some invoices do not belong to the selected vendor" });
-      }
-      const eligible = selectedInvoices.filter((i) => i.isEligible);
-      if (eligible.length === 0) {
-        return res.status(400).json({ message: "No eligible invoices" });
-      }
-
-      const totalEligible = eligible.reduce(
-        (s, i) => s + Number(i.amountRemaining),
-        0
-      );
-      if (advanceAmount > totalEligible) {
-        return res
-          .status(400)
-          .json({ message: "Advance exceeds eligible total" });
-      }
-
-      const restaurant = await storage.getRestaurant(restaurantId);
-      const allRates = await storage.getFeeRates();
-      const fallbackRate = Number(restaurant?.defaultRatePer30d || "0.015");
-
-      let totalWeightedAmount = 0;
-      let weightedDaysSum = 0;
-      let feeAmount = 0;
-
-      for (const inv of eligible) {
-        const daysTodue = Math.max(
-          0,
-          Math.ceil(
-            (new Date(inv.dueDate).getTime() - Date.now()) /
-              (1000 * 60 * 60 * 24)
-          )
-        );
-        const amt = Number(inv.amountRemaining);
-        totalWeightedAmount += amt;
-        weightedDaysSum += amt * daysTodue;
-        const matchingRate = allRates.find(r => daysTodue >= r.minDays && daysTodue <= r.maxDays);
-        const rate = matchingRate ? Number(matchingRate.ratePer30d) : fallbackRate;
-        feeAmount += amt * rate * (daysTodue / 30);
-      }
-
-      const weightedDays =
-        totalWeightedAmount > 0
-          ? weightedDaysSum / totalWeightedAmount
-          : 0;
-
-      const proportion = advanceAmount / totalWeightedAmount;
-      feeAmount = feeAmount * proportion;
-      const totalRepayment = advanceAmount + feeAmount;
-
-      const maxDueDate = eligible.reduce((max, inv) => {
-        const d = new Date(inv.dueDate);
-        return d > max ? d : max;
-      }, new Date(eligible[0].dueDate));
-
-      const isVendorCreated = user.role === "vendor";
-      const offer = await storage.createOffer({
-        restaurantId,
-        vendorId,
-        advanceAmount: String(advanceAmount),
-        feeAmount: String(feeAmount.toFixed(2)),
-        totalRepayment: String(totalRepayment.toFixed(2)),
-        weightedDays: String(weightedDays.toFixed(2)),
-        status: isVendorCreated ? "vendor_accepted" : "draft",
-        repaymentDate: maxDueDate.toISOString().split("T")[0],
-        ...(isVendorCreated ? { acceptedAt: new Date() } : {}),
-      });
-
-      let remaining = advanceAmount;
-      for (const inv of eligible) {
-        const amt = Math.min(remaining, Number(inv.amountRemaining));
-        if (amt <= 0) break;
-        await storage.createOfferAssignment({
-          offerId: offer.id,
-          invoiceId: inv.id,
-          assignedAmount: String(amt.toFixed(2)),
-        });
-        remaining -= amt;
-      }
-
-      return res.json(offer);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers/:id/vendor-accept", requireAuth, requireRole("vendor"), async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      const user = req.currentUser!;
-      if (user.vendorId !== offer.vendorId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      if (offer.status !== "draft") {
-        return res.status(400).json({ message: "Offer is not in draft status" });
-      }
-      await storage.updateOfferStatus(offer.id, "vendor_accepted", new Date());
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers/:id/vendor-reject", requireAuth, requireRole("vendor"), async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      const user = req.currentUser!;
-      if (user.vendorId !== offer.vendorId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      if (offer.status !== "draft") {
-        return res.status(400).json({ message: "Offer is not in draft status" });
-      }
-      await storage.updateOfferStatus(offer.id, "vendor_rejected");
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers/:id/admin-approve", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      if (offer.status !== "vendor_accepted") {
-        return res.status(400).json({ message: "Offer must be vendor-accepted first" });
-      }
-      await storage.updateOfferStatus(offer.id, "admin_approved");
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers/:id/admin-reject", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      if (offer.status !== "vendor_accepted") {
-        return res.status(400).json({ message: "Offer must be vendor-accepted first" });
-      }
-      await storage.updateOfferStatus(offer.id, "admin_rejected");
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers/:id/mark-payout", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      if (offer.status !== "admin_approved") {
-        return res.status(400).json({ message: "Offer must be admin-approved first" });
-      }
-      await storage.updateOfferStatus(offer.id, "payout_sent");
-      await storage.createLedgerEntry({
-        offerId: offer.id,
-        type: "payout",
-        amount: offer.advanceAmount,
-        date: new Date().toISOString().split("T")[0],
-        method: req.body?.method || null,
-        reference: req.body?.reference || null,
-        notes: req.body?.notes || null,
-      });
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/offers/:id/mark-repaid", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
-    try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      if (offer.status !== "payout_sent") {
-        return res.status(400).json({ message: "Payout must be sent first" });
-      }
-      await storage.updateOfferStatus(offer.id, "repaid");
-      await storage.createLedgerEntry({
-        offerId: offer.id,
-        type: "repayment",
-        amount: offer.totalRepayment,
-        date: new Date().toISOString().split("T")[0],
-        method: req.body?.method || null,
-        reference: req.body?.reference || null,
-        notes: req.body?.notes || null,
-      });
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  // Restaurant Financing - shows financed items with split
-  app.get("/api/financing", requireAuth, requireRole("restaurant"), async (req: Request, res: Response) => {
-    try {
-      const user = req.currentUser!;
-      if (!user.restaurantId) return res.json([]);
-      const allOffers = await storage.getOffersByRestaurant(user.restaurantId);
-      const financed = allOffers.filter(o => ["payout_sent", "repaid", "closed"].includes(o.status));
-      const result = [];
-      for (const o of financed) {
-        const vendor = await storage.getVendor(o.vendorId);
-        const ledger = await storage.getLedgerEntriesByOffer(o.id);
-        const repayments = ledger.filter(e => e.type === "repayment");
-        const totalRepaid = repayments.reduce((s, e) => s + Number(e.amount), 0);
-        result.push({
-          id: o.id,
-          vendorName: vendor?.name || "Unknown",
-          advanceAmount: o.advanceAmount,
-          feeAmount: o.feeAmount,
-          totalRepayment: o.totalRepayment,
-          totalRepaid: String(totalRepaid.toFixed(2)),
-          repaymentDate: o.repaymentDate,
-          status: o.status,
-          createdAt: o.createdAt,
-        });
-      }
-      return res.json(result);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.use("/uploads", requireAuth, (req: Request, res: Response, next: any) => {
-    const filePath = path.join(uploadsDir, req.path);
-    if (!fs.existsSync(filePath)) return res.status(404).json({ message: "File not found" });
-    return res.sendFile(filePath);
-  });
-
-  // Restaurant repayment upload
-  app.post("/api/financing/:offerId/repayment", requireAuth, requireRole("restaurant"), upload.single("file"), async (req: Request, res: Response) => {
-    try {
-      const user = req.currentUser!;
-      const offer = await storage.getOffer(req.params.offerId as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-      if (user.restaurantId && offer.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
-      }
-      if (offer.status !== "payout_sent") {
-        return res.status(400).json({ message: "Offer is not awaiting repayment" });
-      }
-      const { amount, reference, method } = req.body || {};
-      if (!amount) {
-        return res.status(400).json({ message: "Amount is required" });
-      }
-      const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
-      await storage.createLedgerEntry({
-        offerId: offer.id,
-        type: "repayment",
-        amount: String(Number(amount).toFixed(2)),
-        date: new Date().toISOString().split("T")[0],
-        method: method || "bank_transfer",
-        reference: reference || null,
-        notes: `Submitted by restaurant`,
-        fileUrl,
-      });
-      await storage.updateOfferStatus(offer.id, "repaid");
-      return res.json({ ok: true });
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  // Fee Rates - admin only
-  app.get("/api/fee-rates", requireAuth, async (_req: Request, res: Response) => {
-    try {
-      const rates = await storage.getFeeRates();
-      return res.json(rates);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.post("/api/fee-rates", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
-    try {
-      const { label, minDays, maxDays, ratePer30d } = req.body;
-      if (!label || minDays === undefined || maxDays === undefined || !ratePer30d) {
+      const { vendorMasterId, effectiveFrom, floorSarPerDelivery, pricingPeriodType, tiers } = req.body;
+      if (!vendorMasterId || !effectiveFrom || !floorSarPerDelivery) {
         return res.status(400).json({ message: "Missing required fields" });
       }
-      const rate = await storage.createFeeRate({
-        label,
-        minDays: Number(minDays),
-        maxDays: Number(maxDays),
-        ratePer30d: String(ratePer30d),
+      const schedule = await storage.createVendorPricingSchedule({
+        vendorMasterId,
+        effectiveFrom,
+        floorSarPerDelivery: String(floorSarPerDelivery),
+        pricingPeriodType: pricingPeriodType || "MONTHLY",
       });
-      return res.json(rate);
+      if (Array.isArray(tiers)) {
+        for (const t of tiers) {
+          await storage.createVendorPricingTier({
+            scheduleId: schedule.id,
+            fromDeliveries: t.fromDeliveries,
+            toDeliveries: t.toDeliveries ?? null,
+            sarPerDelivery: String(t.sarPerDelivery),
+          });
+        }
+      }
+      const createdTiers = await storage.getVendorPricingTiersBySchedule(schedule.id);
+      return res.json({ ...schedule, tiers: createdTiers });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  app.put("/api/fee-rates/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+  app.delete("/api/vendor-pricing-tiers/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
-      const { label, minDays, maxDays, ratePer30d } = req.body;
-      const updates: any = {};
-      if (label !== undefined) updates.label = label;
-      if (minDays !== undefined) updates.minDays = Number(minDays);
-      if (maxDays !== undefined) updates.maxDays = Number(maxDays);
-      if (ratePer30d !== undefined) updates.ratePer30d = String(ratePer30d);
-      const rate = await storage.updateFeeRate(req.params.id as string, updates);
-      return res.json(rate);
-    } catch (err: any) {
-      return res.status(500).json({ message: err.message });
-    }
-  });
-
-  app.delete("/api/fee-rates/:id", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
-    try {
-      await storage.deleteFeeRate(req.params.id as string);
+      await storage.deleteVendorPricingTier(req.params.id);
       return res.json({ ok: true });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  // PDF generation
-  app.get("/api/offers/:id/pdf", requireAuth, async (req: Request, res: Response) => {
+  // ───── Delivery Records ─────
+  app.get("/api/delivery-records", requireAuth, async (req: Request, res: Response) => {
     try {
-      const offer = await storage.getOffer(req.params.id as string);
-      if (!offer) return res.status(404).json({ message: "Offer not found" });
-
       const user = req.currentUser!;
-      if (user.role === "restaurant" && user.restaurantId && offer.restaurantId !== user.restaurantId) {
-        return res.status(403).json({ message: "Forbidden" });
+      const { counterpartyId, vendorMasterId, status } = req.query;
+
+      if (user.role === "vendor" && user.vendorMasterId) {
+        const records = await storage.getDeliveryRecordsByVendorMaster(user.vendorMasterId);
+        return res.json(records);
       }
-      if (user.role === "vendor" && user.vendorId && offer.vendorId !== user.vendorId) {
-        return res.status(403).json({ message: "Forbidden" });
+      if (user.role === "counterparty" && user.counterpartyId) {
+        const records = await storage.getDeliveryRecordsByCounterparty(user.counterpartyId);
+        return res.json(records);
       }
-
-      const vendor = await storage.getVendor(offer.vendorId);
-      const restaurant = await storage.getRestaurant(offer.restaurantId);
-      const assignments = await storage.getOfferAssignments(offer.id);
-
-      const assignmentDetails = [];
-      for (const a of assignments) {
-        const inv = await storage.getInvoice(a.invoiceId);
-        assignmentDetails.push({
-          invoiceNumber: inv?.invoiceNumber || "",
-          assignedAmount: a.assignedAmount,
-          dueDate: inv?.dueDate || "",
-        });
+      if (vendorMasterId) {
+        const records = await storage.getDeliveryRecordsByVendorMaster(vendorMasterId as string);
+        return res.json(records);
       }
-
-      const pdfBuffer = await generateAssignmentNoticePdf({
-        restaurantName: restaurant?.name || "Unknown",
-        vendorName: vendor?.name || "Unknown",
-        assignments: assignmentDetails,
-        advanceAmount: offer.advanceAmount,
-        feeAmount: offer.feeAmount,
-        totalRepayment: offer.totalRepayment,
-        repaymentDate: offer.repaymentDate,
-        bank: {
-          bankName: restaurant?.bankName || null,
-          bankAccountNumber: restaurant?.bankAccountNumber || null,
-          bankRoutingNumber: restaurant?.bankRoutingNumber || null,
-          bankAccountName: restaurant?.bankAccountName || null,
-        },
-      });
-
-      res.setHeader("Content-Type", "application/pdf");
-      res.setHeader(
-        "Content-Disposition",
-        `attachment; filename="assignment-notice-${offer.id.slice(0, 8)}.pdf"`
-      );
-      return res.send(pdfBuffer);
+      if (counterpartyId) {
+        const records = await storage.getDeliveryRecordsByCounterparty(counterpartyId as string);
+        return res.json(records);
+      }
+      const all: any[] = [];
+      const cps = await storage.getCounterparties();
+      for (const cp of cps) {
+        const recs = await storage.getDeliveryRecordsByCounterparty(cp.id);
+        all.push(...recs);
+      }
+      return res.json(all);
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
   });
 
-  // Ledger - admin only
+  app.get("/api/delivery-records/outstanding", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      if (user.role === "vendor" && user.vendorMasterId) {
+        const records = await storage.getOutstandingDeliveryRecordsByVendorMaster(user.vendorMasterId);
+        return res.json(records);
+      }
+      const { vendorMasterId } = req.query;
+      if (vendorMasterId) {
+        const records = await storage.getOutstandingDeliveryRecordsByVendorMaster(vendorMasterId as string);
+        return res.json(records);
+      }
+      return res.status(400).json({ message: "vendorMasterId required" });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/delivery-records", requireAuth, requireRole("admin", "counterparty"), async (req: Request, res: Response) => {
+    try {
+      const { externalDeliveryId, counterpartyId, restaurantId, vendorMasterId, deliveryDate, amountEarned, rawData } = req.body;
+      if (!counterpartyId || !vendorMasterId || !deliveryDate) {
+        return res.status(400).json({ message: "counterpartyId, vendorMasterId, deliveryDate required" });
+      }
+      const user = req.currentUser!;
+      if (user.role === "counterparty" && user.counterpartyId !== counterpartyId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const record = await storage.createDeliveryRecord({
+        externalDeliveryId: externalDeliveryId || null,
+        counterpartyId,
+        restaurantId: restaurantId || null,
+        vendorMasterId,
+        deliveryDate,
+        amountEarned: amountEarned ? String(amountEarned) : null,
+        status: "OUTSTANDING",
+        rawData: rawData || null,
+      });
+      return res.json(record);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/delivery-records/bulk", requireAuth, requireRole("admin", "counterparty"), async (req: Request, res: Response) => {
+    try {
+      const { records } = req.body;
+      if (!Array.isArray(records) || records.length === 0) {
+        return res.status(400).json({ message: "records array required" });
+      }
+      const user = req.currentUser!;
+      const created = [];
+      for (const r of records) {
+        if (user.role === "counterparty" && user.counterpartyId !== r.counterpartyId) {
+          continue;
+        }
+        const record = await storage.createDeliveryRecord({
+          externalDeliveryId: r.externalDeliveryId || null,
+          counterpartyId: r.counterpartyId,
+          restaurantId: r.restaurantId || null,
+          vendorMasterId: r.vendorMasterId,
+          deliveryDate: r.deliveryDate,
+          amountEarned: r.amountEarned ? String(r.amountEarned) : null,
+          status: "OUTSTANDING",
+          rawData: r.rawData || null,
+        });
+        created.push(record);
+      }
+      return res.json({ created: created.length, records: created });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Cashouts ─────
+  app.get("/api/cashouts", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      let cashoutList;
+      if (user.role === "vendor" && user.vendorMasterId) {
+        cashoutList = await storage.getCashoutsByVendorMaster(user.vendorMasterId);
+      } else if (user.role === "counterparty" && user.counterpartyId) {
+        cashoutList = await storage.getCashoutsByCounterparty(user.counterpartyId);
+      } else if (user.role === "admin") {
+        cashoutList = await storage.getCashouts();
+      } else {
+        return res.json([]);
+      }
+      const enriched = [];
+      for (const c of cashoutList) {
+        const vm = await storage.getVendorMaster(c.vendorMasterId);
+        const allocations = await storage.getCashoutAllocationsByCashout(c.id);
+        enriched.push({
+          ...c,
+          vendorName: vm?.legalName || "Unknown",
+          vendorCrn: vm?.crn || "",
+          allocationsCount: allocations.length,
+        });
+      }
+      return res.json(enriched);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.get("/api/cashouts/:id", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      const user = req.currentUser!;
+      if (user.role === "vendor" && user.vendorMasterId !== cashout.vendorMasterId) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      const vm = await storage.getVendorMaster(cashout.vendorMasterId);
+      const allocations = await storage.getCashoutAllocationsByCashout(cashout.id);
+      const deliveries = await storage.getCashoutDeliveriesByCashout(cashout.id);
+      const deliveryIds = deliveries.map(d => d.deliveryRecordId);
+      const deliveryRecords = deliveryIds.length > 0 ? await storage.getDeliveryRecordsByIds(deliveryIds) : [];
+
+      const enrichedAllocations = [];
+      for (const a of allocations) {
+        const cp = await storage.getCounterparty(a.counterpartyId);
+        enrichedAllocations.push({
+          ...a,
+          counterpartyName: cp?.name || "Unknown",
+        });
+      }
+
+      return res.json({
+        ...cashout,
+        vendorName: vm?.legalName || "Unknown",
+        vendorCrn: vm?.crn || "",
+        allocations: enrichedAllocations,
+        deliveryRecords,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/cashouts", requireAuth, requireRole("admin", "vendor"), async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      const { deliveryRecordIds } = req.body;
+
+      if (!Array.isArray(deliveryRecordIds) || deliveryRecordIds.length === 0) {
+        return res.status(400).json({ message: "deliveryRecordIds array required" });
+      }
+
+      const deliveries = await storage.getDeliveryRecordsByIds(deliveryRecordIds);
+      if (deliveries.length !== deliveryRecordIds.length) {
+        return res.status(400).json({ message: "Some delivery records not found" });
+      }
+
+      const nonOutstanding = deliveries.filter(d => d.status !== "OUTSTANDING");
+      if (nonOutstanding.length > 0) {
+        return res.status(400).json({ message: "All deliveries must be OUTSTANDING" });
+      }
+
+      const vendorMasterId = deliveries[0].vendorMasterId;
+      const allSameVendor = deliveries.every(d => d.vendorMasterId === vendorMasterId);
+      if (!allSameVendor) {
+        return res.status(400).json({ message: "All deliveries must belong to the same vendor" });
+      }
+
+      if (user.role === "vendor" && user.vendorMasterId !== vendorMasterId) {
+        return res.status(403).json({ message: "Forbidden: deliveries don't belong to your vendor" });
+      }
+
+      const deliveryCount = deliveries.length;
+      const cashoutAmount = deliveries.reduce((sum, d) => sum + Number(d.amountEarned || 0), 0);
+
+      const tier = await storage.getActivePricingTier(vendorMasterId, deliveryCount);
+      const schedules = await storage.getVendorPricingSchedulesByVendorMaster(vendorMasterId);
+      const latestSchedule = schedules.sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
+      const floorRate = latestSchedule ? Number(latestSchedule.floorSarPerDelivery) : 2.5;
+      const sarPerDelivery = tier ? Math.max(Number(tier.sarPerDelivery), floorRate) : floorRate;
+
+      const feeTotal = sarPerDelivery * deliveryCount;
+      const netPaidToVendor = cashoutAmount - feeTotal;
+
+      if (netPaidToVendor <= 0) {
+        return res.status(400).json({ message: "Fee exceeds cashout amount - insufficient delivery value" });
+      }
+
+      const cashout = await storage.createCashout({
+        vendorMasterId,
+        cashoutAmount: String(cashoutAmount.toFixed(2)),
+        deliveriesCount: deliveryCount,
+        sarPerDeliveryApplied: String(sarPerDelivery.toFixed(4)),
+        feeTotal: String(feeTotal.toFixed(2)),
+        netPaidToVendor: String(netPaidToVendor.toFixed(2)),
+        status: "REQUESTED",
+        pricingPeriodStart: null,
+        pricingPeriodEnd: null,
+        paymentReference: null,
+        paymentMethod: null,
+      });
+
+      for (const d of deliveries) {
+        await storage.createCashoutDelivery({
+          cashoutId: cashout.id,
+          deliveryRecordId: d.id,
+        });
+      }
+
+      await storage.updateDeliveryRecordStatusBatch(deliveryRecordIds, "IN_CASHOUT");
+
+      const counterpartyGroups = new Map<string, typeof deliveries>();
+      for (const d of deliveries) {
+        const arr = counterpartyGroups.get(d.counterpartyId) || [];
+        arr.push(d);
+        counterpartyGroups.set(d.counterpartyId, arr);
+      }
+
+      for (const [cpId, cpDeliveries] of counterpartyGroups) {
+        const cpDeliveryCount = cpDeliveries.length;
+        const cpCashoutPortion = cpDeliveries.reduce((sum, d) => sum + Number(d.amountEarned || 0), 0);
+        const cpFeePortion = sarPerDelivery * cpDeliveryCount;
+        const cpTotalPayable = cpCashoutPortion;
+
+        await storage.createCashoutAllocation({
+          cashoutId: cashout.id,
+          counterpartyId: cpId,
+          deliveriesCount: cpDeliveryCount,
+          cashoutAmountPortion: String(cpCashoutPortion.toFixed(2)),
+          feePortion: String(cpFeePortion.toFixed(2)),
+          totalPayableToUs: String(cpTotalPayable.toFixed(2)),
+          expectedPayDate: null,
+        });
+      }
+
+      const vm = await storage.getVendorMaster(vendorMasterId);
+      return res.json({
+        ...cashout,
+        vendorName: vm?.legalName || "Unknown",
+        vendorCrn: vm?.crn || "",
+        allocationsCount: counterpartyGroups.size,
+      });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Cashout Status Transitions ─────
+  app.post("/api/cashouts/:id/counterparty-approve", requireAuth, requireRole("counterparty"), async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      if (cashout.status !== "REQUESTED") {
+        return res.status(400).json({ message: "Cashout must be in REQUESTED status" });
+      }
+      const user = req.currentUser!;
+      const allocations = await storage.getCashoutAllocationsByCashout(cashout.id);
+      const hasAllocation = allocations.some(a => a.counterpartyId === user.counterpartyId);
+      if (!hasAllocation) {
+        return res.status(403).json({ message: "Forbidden: no allocation for your counterparty" });
+      }
+      await storage.updateCashoutStatus(cashout.id, "COUNTERPARTY_APPROVED");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/cashouts/:id/counterparty-reject", requireAuth, requireRole("counterparty"), async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      if (cashout.status !== "REQUESTED") {
+        return res.status(400).json({ message: "Cashout must be in REQUESTED status" });
+      }
+      const user = req.currentUser!;
+      const allocations = await storage.getCashoutAllocationsByCashout(cashout.id);
+      const hasAllocation = allocations.some(a => a.counterpartyId === user.counterpartyId);
+      if (!hasAllocation) {
+        return res.status(403).json({ message: "Forbidden" });
+      }
+      await storage.updateCashoutStatus(cashout.id, "REJECTED");
+      const deliveryCDs = await storage.getCashoutDeliveriesByCashout(cashout.id);
+      const drIds = deliveryCDs.map(cd => cd.deliveryRecordId);
+      await storage.updateDeliveryRecordStatusBatch(drIds, "OUTSTANDING");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/cashouts/:id/admin-approve", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      if (cashout.status !== "REQUESTED" && cashout.status !== "COUNTERPARTY_APPROVED") {
+        return res.status(400).json({ message: "Cashout must be REQUESTED or COUNTERPARTY_APPROVED" });
+      }
+      await storage.updateCashoutStatus(cashout.id, "ADMIN_APPROVED");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/cashouts/:id/admin-reject", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      if (cashout.status === "PAID_OUT" || cashout.status === "SETTLED") {
+        return res.status(400).json({ message: "Cannot reject after payout" });
+      }
+      await storage.updateCashoutStatus(cashout.id, "REJECTED");
+      const deliveryCDs = await storage.getCashoutDeliveriesByCashout(cashout.id);
+      const drIds = deliveryCDs.map(cd => cd.deliveryRecordId);
+      await storage.updateDeliveryRecordStatusBatch(drIds, "OUTSTANDING");
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/cashouts/:id/mark-payout", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      if (cashout.status !== "ADMIN_APPROVED") {
+        return res.status(400).json({ message: "Cashout must be ADMIN_APPROVED" });
+      }
+      const { paymentReference, paymentMethod } = req.body;
+      await storage.updateCashoutStatus(cashout.id, "PAID_OUT", {
+        paymentReference: paymentReference || null,
+        paymentMethod: paymentMethod || null,
+      });
+      await storage.createLedgerEntry({
+        cashoutId: cashout.id,
+        type: "payout",
+        amount: cashout.netPaidToVendor,
+        date: new Date().toISOString().split("T")[0],
+        method: paymentMethod || null,
+        reference: paymentReference || null,
+        notes: null,
+      });
+
+      const allocations = await storage.getCashoutAllocationsByCashout(cashout.id);
+      for (const alloc of allocations) {
+        const cp = await storage.getCounterparty(alloc.counterpartyId);
+        if (cp) {
+          await storage.createNotificationAttempt({
+            cashoutId: cashout.id,
+            counterpartyId: cp.id,
+            channel: cp.webhookUrl ? "webhook" : "email",
+            status: "pending",
+            retries: 0,
+            responseCode: null,
+            lastAttemptAt: null,
+            payload: {
+              cashoutId: cashout.id,
+              counterpartyId: cp.id,
+              deliveriesCount: alloc.deliveriesCount,
+              totalPayable: alloc.totalPayableToUs,
+            },
+          });
+        }
+      }
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  app.post("/api/cashouts/:id/mark-settled", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const cashout = await storage.getCashout(req.params.id);
+      if (!cashout) return res.status(404).json({ message: "Cashout not found" });
+      if (cashout.status !== "PAID_OUT") {
+        return res.status(400).json({ message: "Cashout must be PAID_OUT first" });
+      }
+      await storage.updateCashoutStatus(cashout.id, "SETTLED");
+      const deliveryCDs = await storage.getCashoutDeliveriesByCashout(cashout.id);
+      const drIds = deliveryCDs.map(cd => cd.deliveryRecordId);
+      await storage.updateDeliveryRecordStatusBatch(drIds, "SETTLED");
+
+      const { amount, method, reference } = req.body;
+      await storage.createLedgerEntry({
+        cashoutId: cashout.id,
+        type: "settlement",
+        amount: amount || cashout.cashoutAmount,
+        date: new Date().toISOString().split("T")[0],
+        method: method || null,
+        reference: reference || null,
+        notes: null,
+      });
+
+      return res.json({ ok: true });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Pricing estimate for vendor ─────
+  app.get("/api/pricing-estimate", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const { vendorMasterId, deliveryCount } = req.query;
+      if (!vendorMasterId || !deliveryCount) {
+        return res.status(400).json({ message: "vendorMasterId and deliveryCount required" });
+      }
+      const count = Number(deliveryCount);
+      const tier = await storage.getActivePricingTier(vendorMasterId as string, count);
+      const schedules = await storage.getVendorPricingSchedulesByVendorMaster(vendorMasterId as string);
+      const latestSchedule = schedules.sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0];
+      const floorRate = latestSchedule ? Number(latestSchedule.floorSarPerDelivery) : 2.5;
+      const sarPerDelivery = tier ? Math.max(Number(tier.sarPerDelivery), floorRate) : floorRate;
+      const totalFee = sarPerDelivery * count;
+      return res.json({
+        sarPerDelivery: sarPerDelivery.toFixed(4),
+        totalFee: totalFee.toFixed(2),
+        deliveryCount: count,
+        tierLabel: tier ? `${tier.fromDeliveries}-${tier.toDeliveries ?? '∞'}` : "default",
+      });
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Ledger (admin) ─────
   app.get("/api/admin/ledger", requireAuth, requireRole("admin"), async (_req: Request, res: Response) => {
     try {
       const entries = await storage.getLedgerEntries();
-      const allOffers = await storage.getOffers();
-      const allLedger = await storage.getLedgerEntries();
-
       const enriched = [];
       for (const entry of entries) {
-        const offer = await storage.getOffer(entry.offerId);
-        const vendor = offer ? await storage.getVendor(offer.vendorId) : null;
-
-        const repayments = allLedger
-          .filter((e) => e.offerId === entry.offerId && e.type === "repayment")
-          .reduce((s, e) => s + Number(e.amount), 0);
-
-        const isOverdue =
-          offer?.status === "accepted" &&
-          offer?.repaymentDate &&
-          new Date(offer.repaymentDate) < new Date() &&
-          Number(offer.totalRepayment) > repayments;
-
+        let vendorName = "Unknown";
+        let cashoutStatus = "unknown";
+        if (entry.cashoutId) {
+          const cashout = await storage.getCashout(entry.cashoutId);
+          if (cashout) {
+            cashoutStatus = cashout.status;
+            const vm = await storage.getVendorMaster(cashout.vendorMasterId);
+            vendorName = vm?.legalName || "Unknown";
+          }
+        }
         enriched.push({
           ...entry,
-          vendorName: vendor?.name || "Unknown",
-          offerStatus: offer?.status || "unknown",
-          totalRepayment: offer?.totalRepayment || "0",
-          totalPaid: String(repayments),
-          isOverdue: !!isOverdue,
+          vendorName,
+          cashoutStatus,
         });
       }
-
-      const offersList = [];
-      for (const o of allOffers) {
-        const v = await storage.getVendor(o.vendorId);
-        offersList.push({
-          id: o.id,
-          vendorName: v?.name || "Unknown",
-          status: o.status,
-        });
-      }
-
-      return res.json({ entries: enriched, offers: offersList });
+      return res.json({ entries: enriched });
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
@@ -953,12 +875,12 @@ export async function registerRoutes(
 
   app.post("/api/admin/ledger", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
     try {
-      const { offerId, type, amount, date, method, reference } = req.body;
-      if (!offerId || !type || !amount || !date) {
+      const { cashoutId, type, amount, date, method, reference } = req.body;
+      if (!cashoutId || !type || !amount || !date) {
         return res.status(400).json({ message: "Missing data" });
       }
       const entry = await storage.createLedgerEntry({
-        offerId,
+        cashoutId,
         type,
         amount: String(amount),
         date,
@@ -970,6 +892,56 @@ export async function registerRoutes(
     } catch (err: any) {
       return res.status(500).json({ message: err.message });
     }
+  });
+
+  // ───── Notifications (admin) ─────
+  app.get("/api/notifications/:cashoutId", requireAuth, requireRole("admin"), async (req: Request, res: Response) => {
+    try {
+      const attempts = await storage.getNotificationAttemptsByCashout(req.params.cashoutId);
+      return res.json(attempts);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── Counterparty settlement (financing view for counterparty) ─────
+  app.get("/api/settlements", requireAuth, requireRole("counterparty"), async (req: Request, res: Response) => {
+    try {
+      const user = req.currentUser!;
+      if (!user.counterpartyId) return res.json([]);
+      const cashoutList = await storage.getCashoutsByCounterparty(user.counterpartyId);
+      const financed = cashoutList.filter(c => ["PAID_OUT", "SETTLED"].includes(c.status));
+      const result = [];
+      for (const c of financed) {
+        const vm = await storage.getVendorMaster(c.vendorMasterId);
+        const allocations = await storage.getCashoutAllocationsByCashout(c.id);
+        const myAlloc = allocations.find(a => a.counterpartyId === user.counterpartyId);
+        result.push({
+          id: c.id,
+          vendorName: vm?.legalName || "Unknown",
+          vendorCrn: vm?.crn || "",
+          cashoutAmount: c.cashoutAmount,
+          feeTotal: c.feeTotal,
+          netPaidToVendor: c.netPaidToVendor,
+          myPortion: myAlloc?.cashoutAmountPortion || "0",
+          myFee: myAlloc?.feePortion || "0",
+          myTotalPayable: myAlloc?.totalPayableToUs || "0",
+          status: c.status,
+          paidOutAt: c.paidOutAt,
+          createdAt: c.createdAt,
+        });
+      }
+      return res.json(result);
+    } catch (err: any) {
+      return res.status(500).json({ message: err.message });
+    }
+  });
+
+  // ───── File uploads serve ─────
+  app.use("/uploads", requireAuth, (req: Request, res: Response, next: any) => {
+    const filePath = path.join(uploadsDir, req.path);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ message: "File not found" });
+    return res.sendFile(filePath);
   });
 
   return httpServer;

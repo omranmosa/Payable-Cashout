@@ -26,7 +26,7 @@ import { Plus, BookOpen, ArrowUpRight, ArrowDownLeft } from "lucide-react";
 
 type LedgerItem = {
   id: string;
-  offerId: string;
+  cashoutId: string;
   type: string;
   amount: string;
   date: string;
@@ -34,16 +34,13 @@ type LedgerItem = {
   reference: string | null;
   notes: string | null;
   vendorName: string;
-  offerStatus: string;
-  totalRepayment: string;
-  totalPaid: string;
-  isOverdue: boolean;
+  cashoutStatus: string;
 };
 
 function formatCurrency(n: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
-    currency: "USD",
+    currency: "SAR",
   }).format(n);
 }
 
@@ -51,7 +48,7 @@ export default function AdminLedgerPage() {
   const { toast } = useToast();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [entryType, setEntryType] = useState("payout");
-  const [entryOfferId, setEntryOfferId] = useState("");
+  const [entryCashoutId, setEntryCashoutId] = useState("");
   const [entryAmount, setEntryAmount] = useState("");
   const [entryDate, setEntryDate] = useState(
     new Date().toISOString().split("T")[0]
@@ -61,7 +58,6 @@ export default function AdminLedgerPage() {
 
   const { data: ledgerData, isLoading } = useQuery<{
     entries: LedgerItem[];
-    offers: Array<{ id: string; vendorName: string; status: string }>;
   }>({
     queryKey: ["/api/admin/ledger"],
   });
@@ -69,7 +65,7 @@ export default function AdminLedgerPage() {
   const createEntryMutation = useMutation({
     mutationFn: async () => {
       await apiRequest("POST", "/api/admin/ledger", {
-        offerId: entryOfferId,
+        cashoutId: entryCashoutId,
         type: entryType,
         amount: parseFloat(entryAmount),
         date: entryDate,
@@ -108,7 +104,6 @@ export default function AdminLedgerPage() {
   }
 
   const entries = ledgerData?.entries || [];
-  const offers = ledgerData?.offers || [];
 
   return (
     <div className="p-6 space-y-6">
@@ -140,23 +135,18 @@ export default function AdminLedgerPage() {
                   <SelectContent>
                     <SelectItem value="payout">Payout</SelectItem>
                     <SelectItem value="repayment">Repayment</SelectItem>
+                    <SelectItem value="settlement">Settlement</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>Offer</Label>
-                <Select value={entryOfferId} onValueChange={setEntryOfferId}>
-                  <SelectTrigger data-testid="select-entry-offer">
-                    <SelectValue placeholder="Select offer" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {offers.map((o) => (
-                      <SelectItem key={o.id} value={o.id}>
-                        {o.vendorName} ({o.status})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Label>Cashout ID</Label>
+                <Input
+                  value={entryCashoutId}
+                  onChange={(e) => setEntryCashoutId(e.target.value)}
+                  placeholder="Enter cashout ID"
+                  data-testid="input-entry-cashout-id"
+                />
               </div>
               <div className="space-y-2">
                 <Label>Amount</Label>
@@ -199,7 +189,7 @@ export default function AdminLedgerPage() {
               <Button
                 className="w-full"
                 disabled={
-                  !entryOfferId ||
+                  !entryCashoutId ||
                   !entryAmount ||
                   createEntryMutation.isPending
                 }
@@ -287,15 +277,9 @@ export default function AdminLedgerPage() {
                         {entry.reference || "-"}
                       </td>
                       <td className="p-3 text-center">
-                        {entry.isOverdue ? (
-                          <Badge variant="destructive" className="text-xs">
-                            Overdue
-                          </Badge>
-                        ) : (
-                          <Badge variant="secondary" className="text-xs capitalize">
-                            {entry.offerStatus}
-                          </Badge>
-                        )}
+                        <Badge variant="secondary" className="text-xs capitalize">
+                          {entry.cashoutStatus}
+                        </Badge>
                       </td>
                     </tr>
                   ))}

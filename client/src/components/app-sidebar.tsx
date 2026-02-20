@@ -10,7 +10,7 @@ import {
   SidebarHeader,
   SidebarFooter,
 } from "@/components/ui/sidebar";
-import { LayoutDashboard, Upload, FileText, BookOpen, LogOut, DollarSign, Percent, Banknote, Store, Building2, Plus } from "lucide-react";
+import { LayoutDashboard, BookOpen, LogOut, DollarSign, Building2, Link2, Truck, Banknote, Store, Plus } from "lucide-react";
 import { useLocation, Link } from "wouter";
 import { useAuth } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
@@ -20,23 +20,22 @@ import { Badge } from "@/components/ui/badge";
 const navByRole: Record<string, { title: string; url: string; icon: any }[]> = {
   admin: [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
-    { title: "Restaurants", url: "/admin/restaurants", icon: Store },
-    { title: "Vendors", url: "/admin/vendors", icon: Building2 },
-    { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
-    { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
-    { title: "Offers", url: "/offers", icon: DollarSign },
-    { title: "Fee Rates", url: "/admin/fee-rates", icon: Percent },
+    { title: "Counterparties", url: "/admin/counterparties", icon: Building2 },
+    { title: "Vendor Masters", url: "/admin/vendor-masters", icon: Store },
+    { title: "Vendor Mappings", url: "/admin/mappings", icon: Link2 },
+    { title: "Delivery Records", url: "/delivery-records", icon: Truck },
+    { title: "Cashouts", url: "/cashouts", icon: DollarSign },
     { title: "Admin Ledger", url: "/admin/ledger", icon: BookOpen },
   ],
-  restaurant: [
+  counterparty: [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
-    { title: "Upload Invoices", url: "/restaurants/default/upload", icon: Upload },
-    { title: "Vendor Invoices", url: "/restaurants/default/vendors", icon: FileText },
-    { title: "Financing", url: "/financing", icon: Banknote },
+    { title: "Delivery Records", url: "/delivery-records", icon: Truck },
+    { title: "Cashouts", url: "/cashouts", icon: DollarSign },
+    { title: "Settlements", url: "/settlements", icon: Banknote },
   ],
   vendor: [
     { title: "Dashboard", url: "/", icon: LayoutDashboard },
-    { title: "My Invoices", url: "/vendor/invoices", icon: FileText },
+    { title: "My Deliveries", url: "/my-deliveries", icon: Truck },
     { title: "Cashouts", url: "/cashouts", icon: DollarSign },
     { title: "Request Cashout", url: "/cashouts/new", icon: Plus },
   ],
@@ -44,7 +43,7 @@ const navByRole: Record<string, { title: string; url: string; icon: any }[]> = {
 
 const roleLabels: Record<string, string> = {
   admin: "Admin",
-  restaurant: "Restaurant",
+  counterparty: "Counterparty",
   vendor: "Vendor",
 };
 
@@ -52,8 +51,8 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { user, logout } = useAuth();
 
-  const role = user?.role || "restaurant";
-  const navItems = navByRole[role] || navByRole.restaurant;
+  const role = user?.role || "counterparty";
+  const navItems = navByRole[role] || navByRole.counterparty;
 
   const initials = user?.name
     ? user.name
