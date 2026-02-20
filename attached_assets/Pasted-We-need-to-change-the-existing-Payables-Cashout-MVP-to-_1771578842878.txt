@@ -1,0 +1,82 @@
+We need to change the existing “Payables Cashout” MVP to match new requirements. Update the codebase (Next.js 14 App Router + TS + Tailwind + Prisma + Postgres) with the following SPEC. Implement it end-to-end (DB schema, APIs, UI pages, validations, seed data) and add tests for pricing + RBAC access checks.
+
+A) PRICING CHANGE (PER-DELIVERY, TIERED, VENDOR-SPECIFIC)
+1) Replace percentage-based fee with SAR-per-delivery pricing.
+2) Create a VendorPricingSchedule model:
+   - vendor_id (FK)
+   - pricing_period_type: "MONTHLY" or "ROLLING_30D"
+   - effective_from (date)
+   - floor_sar_per_delivery (decimal)
+   - tiers (store as normalized table VendorPricingTier with fields: from_deliveries, to_deliveries (nullable), sar_per_delivery)
+3) Pricing calculation (MVP method = SINGLE-TIER):
+   - Determine the vendor’s current pricing tier using “deliveries already cashed out in the current pricing period” + the new cashout’s delivery count.
+   - Apply ONE sar_per_delivery to all deliveries in this cashout (single-tier). Enforce floor.
+   - Store fee_total = deliveries_count * sar_per_delivery_applied.
+   - Keep fields cashout_amount, net_paid_to_vendor = cashout_amount - fee_total.
+4) Add an admin UI to edit vendor pricing schedules + tiers, and show “current tier” + “deliveries used this period”.
+
+B) VENDOR MASTER + AUTO-MAPPING VIA COMMERCIAL REGISTRATION NUMBER (CRN)
+1) Introduce VendorMaster table (internal vendor entity):
+   - id, legal_name, crn (unique), bank details (iban, beneficiary, bank_name), created_at
+2) Introduce Counterparty table to represent Restaurant or Aggregator:
+   - id, name, type: "RESTAURANT"|"AGGREGATOR", notification settings (emails, webhook_url, webhook_secret), created_at
+3) Introduce VendorCounterpartyMapping table:
+   - id, counterparty_id, counterparty_vendor_ref (string), vendor_master_id, crn, status: VERIFIED|UNVERIFIED, created_at
+4) Matching rule: when importing invoice/delivery data, if CRN is present, auto-link to VendorMaster by CRN. If not found, create UNVERIFIED mapping and show it in Admin “Mapping Review” UI.
+
+C) DELIVERIES + CASHOUT ALLOCATION (TO SUPPORT PER-DELIVERY PRICING)
+1) Add DeliveryRecord model:
+   - id, external_delivery_id (nullable), counterparty_id, restaurant_id (nullable), vendor_master_id, delivery_date, amount_earned (nullable), status: OUTSTANDING|IN_CASHOUT|SETTLED, raw_data JSON, created_at
+2) Cashout model updates:
+   - vendor_master_id, pricing_period_start, pricing_period_end
+   - deliveries_count (int)
+   - sar_per_delivery_applied (decimal)
+   - fee_total (decimal)
+   - cashout_amount (decimal)
+   - net_paid_to_vendor (decimal)
+   - status: REQUESTED|VENDOR_ACCEPTED|COUNTERPARTY_APPROVED|PAID_OUT|REPAID|REJECTED
+3) Add CashoutAllocation model to split a cashout by counterparty:
+   - cashout_id, counterparty_id, deliveries_count, cashout_amount_portion, fee_portion, total_payable_to_us, expected_pay_date
+4) UI: Vendor can initiate a cashout by selecting OUTSTANDING deliveries (filter by counterparty / date). The system computes totals, fee, net, shows a review screen, and vendor can ACCEPT.
+5) Restaurant/Aggregator (counterparty) must be able to APPROVE/REJECT cashouts that include their deliveries/invoices.
+
+D) NOTIFICATIONS TO COUNTERPARTY ON CASHOUT
+1) When a cashout transitions to PAID_OUT, send a notification to each impacted counterparty (from CashoutAllocation) using:
+   - Email (MVP) and Webhook (if webhook_url exists)
+2) Notification payload must include:
+   vendor_name, vendor_crn, cashout_id, cashout_datetime, deliveries_count, cashout_amount_total, fee_total, net_paid_to_vendor,
+   plus per-counterparty: deliveries_count, cashout_amount_portion, fee_portion, total_payable_to_us, expected_pay_date,
+   payment_confirmation (reference, timestamp, method).
+3) Implement idempotency + retry for webhooks (store NotificationAttempt table with status, retries, response_code, last_attempt_at).
+
+E) “OUTSTANDING TO VENDOR” CONNECTOR (READ-ONLY)
+1) Add a simple internal API endpoint:
+   GET /api/counterparties/[counterpartyId]/vendors/[vendorCrn]/outstanding
+   Returns normalized response: total_outstanding_amount, deliveries_outstanding_count, earliest_due_date (nullable), next_payment_run_date (nullable), updated_at.
+2) MVP data source: compute from DeliveryRecord where status=OUTSTANDING for that counterparty+vendor. (Later connectors can replace this, but keep an interface/adapter pattern.)
+
+F) RBAC CORRECTION (IMPORTANT)
+Update RBAC exactly as follows:
+- Admin: full access to everything + admin ledger + mapping review + pricing config.
+- Restaurant/Aggregator user: only their counterparty data (dashboard, upload/snapshot import if enabled, view/approve/reject cashouts involving them, view notices). No admin ledger, no global views.
+- Vendor user: only their vendor_master data. They CAN initiate and ACCEPT cashouts. They can view their deliveries and offers/cashouts, but cannot upload counterparty data, cannot access admin ledger, cannot change pricing config.
+Enforce RBAC on both UI routing and API endpoints.
+
+G) MIGRATION + SEED DATA
+1) Write Prisma migrations to add/modify all models and keep existing data if possible.
+2) Seed:
+   - Admin user (admin@payables.com)
+   - One vendor (vendor@payables.com) linked to VendorMaster with a CRN and pricing tiers
+   - Two counterparties (restaurant + aggregator users) each with notification email
+   - Sample deliveries across both counterparties mapped to the same vendor CRN
+   - Demonstrate a cashout that allocates across both counterparties.
+
+H) TESTS
+1) Unit tests for pricing tier selection + fee calculation for MONTHLY and ROLLING_30D.
+2) RBAC tests: ensure vendor can accept cashout; restaurant can approve; vendor cannot view admin ledger; restaurant cannot see other counterparties.
+
+Deliverables:
+- Updated Prisma schema, migrations, seed scripts
+- Updated API routes + server actions
+- Updated UI pages and navigation
+- Documentation in README: how to run locally, env vars, and demo flow with seeded accounts.
